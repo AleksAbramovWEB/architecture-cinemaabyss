@@ -1,0 +1,167 @@
+Running tests against kubernetes environment...
+(node:1) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+newman
+
+CinemaAbyss API Tests
+
+❏ Monolith Service
+↳ Health Check
+  GET https://cinemaabyss.example.com/health [200 OK, 170B, 73ms]
+  ✓  Status code is 200
+
+↳ Get All Users
+  GET https://cinemaabyss.example.com/api/users [200 OK, 337B, 14ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Create User
+  POST https://cinemaabyss.example.com/api/users [201 Created, 306B, 14ms]
+  ✓  Status code is 201
+  ✓  Response has id
+
+↳ Get User by ID
+  GET https://cinemaabyss.example.com/api/users?id=4 [200 OK, 301B, 7ms]
+  ✓  Status code is 200
+  ✓  User ID matches
+
+↳ Get All Movies
+  GET https://cinemaabyss.example.com/api/movies [200 OK, 1.44kB, 14ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Create Movie
+  POST https://cinemaabyss.example.com/api/movies [201 Created, 309B, 15ms]
+  ✓  Status code is 201
+  ✓  Response has id
+
+↳ Get Movie by ID
+  GET https://cinemaabyss.example.com/api/movies?id=6 [200 OK, 304B, 7ms]
+  ✓  Status code is 200
+  ✓  Movie ID matches
+
+↳ Create Payment
+  POST https://cinemaabyss.example.com/api/payments [201 Created, 251B, 13ms]
+  ✓  Status code is 201
+  ✓  Response has id
+
+↳ Get Payment by ID
+  GET https://cinemaabyss.example.com/api/payments?id=4 [200 OK, 243B, 11ms]
+  ✓  Status code is 200
+  ✓  Payment ID matches
+
+↳ Create Subscription
+  POST https://cinemaabyss.example.com/api/subscriptions [201 Created, 293B, 8ms]
+  ✓  Status code is 201
+  ✓  Response has id
+
+↳ Get Subscription by ID
+  GET https://cinemaabyss.example.com/api/subscriptions?id=4 [200 OK, 288B, 8ms]
+  ✓  Status code is 200
+  ✓  Subscription ID matches
+
+❏ Movies Microservice
+↳ Health Check
+  GET https://cinemaabyss.example.com/api/movies/health [200 OK, 188B, 9ms]
+  ✓  Status code is 200
+  ✓  Status is true
+
+↳ Get All Movies
+  GET https://cinemaabyss.example.com/api/movies [200 OK, 1.57kB, 15ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Create Movie
+  POST https://cinemaabyss.example.com/api/movies [201 Created, 346B, 12ms]
+  ✓  Status code is 201
+  ✓  Response has id
+
+↳ Get Movie by ID
+  GET https://cinemaabyss.example.com/api/movies?id=7 [200 OK, 341B, 11ms]
+  ✓  Status code is 200
+  ✓  Movie ID matches
+
+❏ Events Microservice
+↳ Health Check
+  GET https://cinemaabyss.example.com/api/events/health [200 OK, 187B, 9ms]
+  ✓  Status code is 200
+  ✓  Status is true
+
+↳ Create Movie Event
+  POST https://cinemaabyss.example.com/api/events/movie [201 Created, 419B, 370ms]
+  ✓  Status code is 201
+  ✓  Response has status success
+
+↳ Create User Event
+  POST https://cinemaabyss.example.com/api/events/user [201 Created, 442B, 17ms]
+  ✓  Status code is 201
+  ✓  Response has status success
+
+↳ Create Payment Event
+  POST https://cinemaabyss.example.com/api/events/payment [201 Created, 480B, 22ms]
+  ✓  Status code is 201
+  ✓  Response has status success
+
+❏ Proxy Service
+↳ Health Check
+  GET https://cinemaabyss.example.com/health [200 OK, 170B, 3ms]
+  ✓  Status code is 200
+
+↳ Get All Movies via Proxy
+  GET https://cinemaabyss.example.com/api/movies [200 OK, 1.74kB, 10ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Get All Users via Proxy
+  GET https://cinemaabyss.example.com/api/users [200 OK, 471B, 5ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+❏ Events via API Gateway
+↳ Events health via Proxy
+  GET https://cinemaabyss.example.com/api/events/health [200 OK, 187B, 7ms]
+  ✓  Events health is available through Gateway
+
+↳ Create Movie Event via Proxy
+  POST https://cinemaabyss.example.com/api/events/movie [201 Created, 422B, 16ms]
+  ✓  Gateway returns 201 after Kafka acknowledgement
+  ✓  Event envelope and payload follow the contract
+
+↳ Create User Event via Proxy
+  POST https://cinemaabyss.example.com/api/events/user [201 Created, 446B, 15ms]
+  ✓  Gateway returns 201 after Kafka acknowledgement
+  ✓  Event envelope and payload follow the contract
+
+↳ Create Payment Event via Proxy
+  POST https://cinemaabyss.example.com/api/events/payment [201 Created, 480B, 13ms]
+  ✓  Gateway returns 201 after Kafka acknowledgement
+  ✓  Event envelope and payload follow the contract
+
+↳ Reject invalid event via Proxy
+  POST https://cinemaabyss.example.com/api/events/user [400 Bad Request, 247B, 20ms]
+  ✓  Missing required fields are rejected through Gateway
+
+┌─────────────────────────┬───────────────────┬──────────────────┐
+│                         │          executed │           failed │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│              iterations │                 1 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│                requests │                27 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│            test-scripts │                27 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│      prerequest-scripts │                 0 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│              assertions │                50 │                0 │
+├─────────────────────────┴───────────────────┴──────────────────┤
+│ total run duration: 4s                                         │
+├────────────────────────────────────────────────────────────────┤
+│ total data received: 7.76kB (approx)                           │
+├────────────────────────────────────────────────────────────────┤
+│ average response time: 27ms [min: 3ms, max: 370ms, s.d.: 68ms] │
+└────────────────────────────────────────────────────────────────┘
+Newman run completed!
+Total requests: 27
+Failed requests: 0
+Total assertions: 50
+Failed assertions: 0

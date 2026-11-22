@@ -1,0 +1,9 @@
+NAME                              READY   STATUS    RESTARTS      AGE     IP            NODE          NOMINATED NODE   READINESS GATES
+events-service-55bc944d9d-8dkl8   1/1     Running   2 (12m ago)   15m     10.244.0.11   cinemaabyss   <none>           <none>
+kafka-0                           1/1     Running   0             3m22s   10.244.0.15   cinemaabyss   <none>           <none>
+monolith-5ffb869b7f-scdm9         1/1     Running   0             15m     10.244.0.9    cinemaabyss   <none>           <none>
+movies-service-85664f4d76-gdqsx   1/1     Running   0             15m     10.244.0.10   cinemaabyss   <none>           <none>
+postgres-0                        1/1     Running   0             16m     10.244.0.6    cinemaabyss   <none>           <none>
+proxy-service-5bdc6b99fb-lw2zd    1/1     Running   0             68s     10.244.0.19   cinemaabyss   <none>           <none>
+proxy-service-5bdc6b99fb-n8mwb    1/1     Running   0             77s     10.244.0.18   cinemaabyss   <none>           <none>
+zookeeper-0                       1/1     Running   0             16m     10.244.0.8    cinemaabyss   <none>           <none>

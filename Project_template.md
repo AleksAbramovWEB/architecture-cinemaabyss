@@ -217,220 +217,130 @@ mvn -f src/microservices/events/pom.xml verify
 
 # Задание 3
 
-Команда начала переезд в Kubernetes для лучшего масштабирования и повышения надежности. 
-Вам, как архитектору осталось самое сложное:
- - реализовать CI/CD для сборки прокси сервиса
- - реализовать необходимые конфигурационные файлы для переключения трафика.
+## CI/CD: тестирование и публикация образов
 
+[Основной workflow](.github/workflows/docker-build-push.yml) запускается на изменения исходников, тестов, скриптов и конфигурации в `cinema`, `main`, `master`, на pull request, а также вручную и при публикации релиза. Изменения только документации не пересобирают образы при push. Этапы выполняются последовательно:
 
-### CI/CD
+1. **Java 21 tests**: Maven `verify` отдельно для Proxy и Events, с сохранением Surefire-отчётов.
+2. **Compose and Postman**: [переиспользуемый workflow API Tests](.github/workflows/api-tests.yml) собирает весь стенд, дожидается HTTP-готовности через [readiness-скрипт](scripts/ci/wait-for-services.sh), запускает полную коллекцию Newman. HTML/JUnit-отчёты и логи сохраняются как artifacts; остановка стенда выполняется и при ошибке.
+3. **Publish**: только после успешных тестов публикуются `monolith`, `movies-service`, `events-service`, `proxy-service`. Pull request проверяется без публикации; секреты registry в PR не используются.
 
- В папке .github/worflows доработайте деплой новых сервисов proxy и events в docker-build-push.yml , чтобы api-tests при сборке отрабатывали корректно при отправке коммита в ваш репозиторий.
+Имена образов вычисляются из собственного `github.repository` и приводятся к нижнему регистру. Для GHCR используется временный `GITHUB_TOKEN` с `packages: write`; PAT и Docker credentials в репозитории не нужны. Публикуются платформы `linux/amd64` и `linux/arm64`, теги ветки (`cinema`), неизменяемый `sha-<полный SHA>`, теги релиза. `latest` обновляется только для основной ветки или стабильного релиза. Java JAR собирается на платформе builder; Go использует `TARGETOS`/`TARGETARCH`, поэтому cross-build не эмулирует компилятор.
 
-Нужно доработать 
-```yaml
-on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'src/**'
-      - '.github/workflows/docker-build-push.yml'
-  release:
-    types: [published]
-```
-и добавить необходимые шаги в блок
-```yaml
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+Образы для манифестов задания 3:
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-```
-Как только сборка отработает и в github registry появятся ваши образы, можно переходить к блоку настройки Kubernetes
-Успешным результатом данного шага является "зеленая" сборка и "зеленые" тесты
-
-
-### Proxy в Kubernetes
-
-#### Шаг 1
-Для деплоя в kubernetes необходимо залогиниться в docker registry Github'а.
-1. Создайте Personal Access Token (PAT) https://github.com/settings/tokens . Создавайте class с правом read:packages
-2. В src/kubernetes/*.yaml (event-service, monolith, movies-service и proxy-service)  отредактируйте путь до ваших образов 
-```bash
- spec:
-      containers:
-      - name: events-service
-        image: ghcr.io/ваш логин/имя репозитория/events-service:latest
-```
-3. Добавьте в секрет src/kubernetes/dockerconfigsecret.yaml в поле
-```bash
- .dockerconfigjson: значение в base64 файла ~/.docker/config.json
+```text
+ghcr.io/aleksabramovweb/architecture-cinemaabyss/monolith:cinema
+ghcr.io/aleksabramovweb/architecture-cinemaabyss/movies-service:cinema
+ghcr.io/aleksabramovweb/architecture-cinemaabyss/events-service:cinema
+ghcr.io/aleksabramovweb/architecture-cinemaabyss/proxy-service:cinema
 ```
 
-4. Если в ~/.docker/config.json нет значения для аутентификации
-```json
-{
-        "auths": {
-                "ghcr.io": {
-                       тут пусто
-                }
-        }
-}
-```
-то выполните 
+[Успешный запуск GitHub Actions](https://github.com/AleksAbramovWEB/architecture-cinemaabyss/actions/runs/45023522935) подтвердил Java-тесты, API-тесты и публикацию всех четырёх образов. Образы доступны анонимно; Kubernetes загружает их непосредственно из GHCR. Для частного registry можно создать `imagePullSecret` отдельно и добавить ссылку в Pod spec; файл `dockerconfigsecret.yaml` содержит только необязательный пустой пример, а не учётные данные.
 
-и добавьте
+[Сводка успешного CI](docs/evidence/task3/github-actions.json) содержит commit SHA и результаты всех семи jobs.
 
-```json 
- "auth": "имя пользователя:токен в base64"
-```
+Этот pipeline обеспечивает проверку и доставку контейнеров в registry. Применение в локальный Kubernetes выполняется командами ниже; GitHub runner не получает доступ к личному minikube.
 
-Чтобы получить значение в base64 можно выполнить команду
-```bash
- echo -n ваш_логин:ваш_токен | base64
-```
+## Kubernetes: Gateway, Events и TLS
 
-После заполнения config.json, также прогоните содержимое через base64
+- [Proxy Deployment и Service](src/kubernetes/proxy-service.yaml): два экземпляра, ClusterIP на 8000, RollingUpdate, startup/readiness/liveness `/health`, graceful shutdown, ограничения ресурсов и JVM heap.
+- [Events Deployment и Service](src/kubernetes/events-service.yaml): ClusterIP на 8082, Kafka broker/group из ConfigMap, HTTP probes `/api/events/health`, ресурсы JVM и graceful shutdown.
+- [ConfigMap](src/kubernetes/configmap.yaml): адреса монолита, Movies, Events, Kafka; `GRADUAL_MIGRATION=true`, `MOVIES_MIGRATION_PERCENT=100`.
+- [Ingress](src/kubernetes/ingress.yaml): host `cinemaabyss.example.com`, TLS secret `cinemaabyss-tls`, префикс `/` направляется в Proxy. Создание событий также проходит через Gateway; отдельного публичного обхода Proxy нет.
+- [PostgreSQL](src/kubernetes/postgres.yaml) и [Kafka/ZooKeeper](src/kubernetes/kafka/kafka.yaml) сохраняют данные в PVC. Брокер работает в одноузловой конфигурации; Events создаёт три топика через Kafka Admin. Kafka Service публикует адрес при старте, чтобы advertised listener был доступен до readiness. TCP-пробы не запускают дополнительные JVM; топики создаёт Events через Kafka Admin, без параллельных CLI-процессов в контейнере брокера.
+
+Локальный TLS создаёт [скрипт](scripts/kubernetes/create-local-tls.sh): отдельный CA и сертификат с SAN `cinemaabyss.example.com`. Приватные ключи остаются в игнорируемом `.local/`; в Kubernetes передаётся только TLS Secret. При тестировании явно используется созданный CA, проверка сертификатов не отключается.
+
+## Развёртывание
+
+Требуются Docker, minikube для архитектуры хоста, kubectl и OpenSSL. Пример из корня репозитория с отдельным kubeconfig:
 
 ```bash
-cat .docker/config.json | base64
+mkdir -p .local/cinemaabyss
+export KUBECONFIG="$PWD/.local/cinemaabyss/kubeconfig"
+minikube start -p cinemaabyss --driver=docker --cpus=4 --memory=6144
+kubectl config use-context cinemaabyss
+minikube -p cinemaabyss addons enable ingress
+kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=300s
+
+kubectl apply -f src/kubernetes/namespace.yaml
+kubectl apply -f src/kubernetes/configmap.yaml -f src/kubernetes/secret.yaml
+kubectl apply -f src/kubernetes/postgres-init-configmap.yaml -f src/kubernetes/postgres.yaml
+kubectl apply -f src/kubernetes/kafka/kafka.yaml
+kubectl -n cinemaabyss rollout status statefulset/postgres --timeout=300s
+kubectl -n cinemaabyss rollout status statefulset/zookeeper --timeout=300s
+kubectl -n cinemaabyss rollout status statefulset/kafka --timeout=300s
+
+bash scripts/kubernetes/create-local-tls.sh
+kubectl apply -f src/kubernetes/monolith.yaml -f src/kubernetes/movies-service.yaml
+kubectl apply -f src/kubernetes/events-service.yaml -f src/kubernetes/proxy-service.yaml
+kubectl apply -f src/kubernetes/ingress.yaml
+kubectl -n cinemaabyss rollout status deployment/proxy-service --timeout=300s
+kubectl -n cinemaabyss rollout status deployment/events-service --timeout=300s
+kubectl -n cinemaabyss get pods,services,ingress
 ```
 
-и полученное значение добавляем в
+Для обычного доступа из браузера нужно направить `cinemaabyss.example.com` в локальный ingress: стандартный вариант задания — `minikube -p cinemaabyss tunnel` и запись `127.0.0.1 cinemaabyss.example.com` в `/etc/hosts`. Системная запись и привилегированные порты могут потребовать прав администратора.
+
+При фактической проверке на macOS использован TCP-проброс через Docker, без изменения `/etc/hosts`. HTTPS NodePort берётся из установленного ingress, имя сети совпадает с отдельным Docker-профилем `cinemaabyss`:
 
 ```bash
- .dockerconfigjson: значение в base64 файла ~/.docker/config.json
+https_node_port="$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}')"
+docker run -d --name cinemaabyss-ingress-access --network cinemaabyss \
+  -p 127.0.0.1:443:443 alpine/socat \
+  TCP-LISTEN:443,fork,reuseaddr "TCP:cinemaabyss:$https_node_port"
+
+curl --resolve cinemaabyss.example.com:443:127.0.0.1 \
+  --cacert .local/cinemaabyss/tls/ca.crt \
+  https://cinemaabyss.example.com/api/movies
 ```
 
-#### Шаг 2
+Этот вспомогательный контейнер только передаёт TCP в ingress; TLS завершает ingress, а HTTP-маршрутизацию выполняет Proxy. Если имя уже задано в hosts, `--resolve` не нужен.
 
-  Доработайте src/kubernetes/event-service.yaml и src/kubernetes/proxy-service.yaml
-
-  - Необходимо создать Deployment и Service 
-  - Доработайте ingress.yaml, чтобы можно было с помощью тестов проверить создание событий
-  - Выполните дальшейшие шаги для поднятия кластера:
-
-  1. Создайте namespace:
-  ```bash
-  kubectl apply -f src/kubernetes/namespace.yaml
-  ```
-  2. Создайте секреты и переменные
-  ```bash
-  kubectl apply -f src/kubernetes/configmap.yaml
-  kubectl apply -f src/kubernetes/secret.yaml
-  kubectl apply -f src/kubernetes/dockerconfigsecret.yaml
-  kubectl apply -f src/kubernetes/postgres-init-configmap.yaml
-  ```
-
-  3. Разверните базу данных:
-  ```bash
-  kubectl apply -f src/kubernetes/postgres.yaml
-  ```
-
-  На этом этапе если вызвать команду
-  ```bash
-  kubectl -n cinemaabyss get pod
-  ```
-  Вы увидите
-
-  NAME         READY   STATUS    
-  postgres-0   1/1     Running   
-
-  4. Разверните Kafka:
-  ```bash
-  kubectl apply -f src/kubernetes/kafka/kafka.yaml
-  ```
-
-  Проверьте, теперь должно быть запущено 3 пода, если что-то не так, то посмотрите логи
-  ```bash
-  kubectl -n cinemaabyss logs имя_пода (например - kafka-0)
-  ```
-
-  5. Разверните монолит:
-  ```bash
-  kubectl apply -f src/kubernetes/monolith.yaml
-  ```
-  6. Разверните микросервисы:
-  ```bash
-  kubectl apply -f src/kubernetes/movies-service.yaml
-  kubectl apply -f src/kubernetes/events-service.yaml
-  ```
-  7. Разверните прокси-сервис:
-  ```bash
-  kubectl apply -f src/kubernetes/proxy-service.yaml
-  ```
-
-  После запуска и поднятия подов вывод команды 
-  ```bash
-  kubectl -n cinemaabyss get pod
-  ```
-
-  Будет наподобие такого
+Полный Postman-прогон при настроенном hosts:
 
 ```bash
-  NAME                              READY   STATUS    
-
-  events-service-7587c6dfd5-6whzx   1/1     Running  
-
-  kafka-0                           1/1     Running   
-
-  monolith-8476598495-wmtmw         1/1     Running  
-
-  movies-service-6d5697c584-4qfqs   1/1     Running  
-
-  postgres-0                        1/1     Running  
-
-  proxy-service-577d6c549b-6qfcv    1/1     Running  
-
-  zookeeper-0                       1/1     Running 
+NODE_EXTRA_CA_CERTS="$PWD/.local/cinemaabyss/tls/ca.crt" \
+  npm --prefix tests/postman run test:kubernetes
 ```
 
-  8. Добавим ingress
+Вариант проверки без изменения hosts, использованный на стенде:
 
-  - добавьте аддон
-  ```bash
-  minikube addons enable ingress
-  ```
-  ```bash
-  kubectl apply -f src/kubernetes/ingress.yaml
-  ```
-  9. Добавьте в /etc/hosts
-  127.0.0.1 cinemaabyss.example.com
+```bash
+docker build -t cinemaabyss-postman:task3 tests/postman
+docker run --rm --add-host cinemaabyss.example.com:host-gateway \
+  -v "$PWD/tests/postman/reports:/app/reports" \
+  -v "$PWD/.local/cinemaabyss/tls/ca.crt:/tls/ca.crt:ro" \
+  -e NODE_EXTRA_CA_CERTS=/tls/ca.crt \
+  cinemaabyss-postman:task3 --environment kubernetes
+kubectl -n cinemaabyss logs deployment/events-service
+```
 
-  10. Вызовите
-  ```bash
-  minikube tunnel
-  ```
-  11. Вызовите https://cinemaabyss.example.com/api/movies
-  Вы должны увидеть вывод списка фильмов
-  Можно поэкспериментировать со значением   MOVIES_MIGRATION_PERCENT в src/kubernetes/configmap.yaml и убедится, что вызовы movies уходят полностью в новый сервис
+Изменение процента в ConfigMap применяется перезапуском Proxy, поскольку env читается при старте:
 
-  12. Запустите тесты из папки tests/postman
-  ```bash
-   npm run test:kubernetes
-  ```
-  Часть тестов с health-чек упадет, но создание событий отработает.
-  Откройте логи event-service и сделайте скриншот обработки событий
+```bash
+kubectl apply -f src/kubernetes/configmap.yaml
+kubectl -n cinemaabyss rollout restart deployment/proxy-service
+kubectl -n cinemaabyss rollout status deployment/proxy-service
+```
 
-#### Шаг 3
-Добавьте сюда скриншота вывода при вызове https://cinemaabyss.example.com/api/movies и  скриншот вывода event-service после вызова тестов.
+## Результаты и подтверждения
 
+Проверено 22.11.2026 в отдельном minikube-профиле `cinemaabyss`, Kubernetes v1.33.1, ARM64. Все восемь Pod приложения и инфраструктуры находятся в Ready/Running; Proxy работает в двух экземплярах. В [списке образов](docs/evidence/task3/running-images.json) сохранены фактические image IDs загруженных GHCR-контейнеров.
+
+- HTTPS `/api/movies`: **200**, JSON со списком фильмов, `X-Cinemaabyss-Upstream: movies-service`. CA и имя сертификата проверяются.
+- Kubernetes Postman: **27 запросов, 50 проверок, 0 ошибок**, включая health-check, исходные сценарии Events и папку Events via API Gateway. Все внешние запросы физически проходят через ingress и Proxy.
+- Consumer Events обработал **6 событий** в трёх топиках, по два каждого типа.
+- ConfigMap + rollout: при `100` все 20 запросов направлены в Movies; при `0` все 20 — в монолит; после возврата `100` ещё 20 запросов подтвердили Movies.
+
+Сохранены [Pod status](docs/evidence/task3/pods.txt), [сводка Postman](docs/evidence/task3/postman-summary.json), [CLI-отчёт](docs/evidence/task3/postman-output.txt), [проверка миграции](docs/evidence/task3/migration.json), [HTTP-заголовки](docs/evidence/task3/movies-headers.txt), [JSON ответа](docs/evidence/task3/movies.json) и [строки consumer-лога](docs/evidence/task3/events-processing.txt). Скриншоты ниже показывают экспорт фактического вывода curl/kubectl и сформированный Newman HTML-отчёт.
+
+![Ответ HTTPS API в Kubernetes](docs/evidence/task3/movies-response.png)
+
+![Обработка событий Events Service в Kubernetes](docs/evidence/task3/events-processing.png)
+
+![Kubernetes Postman: 27 запросов, 50 проверок, ошибок нет](docs/evidence/task3/kubernetes-postman.png)
 
 # Задание 4
 Для простоты дальнейшего обновления и развертывания вам как архитектуру необходимо так же реализовать helm-чарты для прокси-сервиса и проверить работу 
