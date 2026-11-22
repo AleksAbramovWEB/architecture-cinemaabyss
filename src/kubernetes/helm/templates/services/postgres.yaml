@@ -2,92 +2,110 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: postgres
-    app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "cinemaabyss.labels" . | nindent 4 }}
 spec:
   serviceName: postgres
   replicas: 1
   selector:
     matchLabels:
       app: postgres
+      app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ dict "host" .Values.database.host "port" .Values.database.port "name" .Values.database.name "user" .Values.database.user | toJson | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/init: {{ include (print $.Template.BasePath "/postgres-init-configmap.yaml") . | sha256sum }}
       labels:
         app: postgres
+        {{- include "cinemaabyss.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "cinemaabyss.imagePullSecrets" . | nindent 6 }}
       containers:
-      - name: postgres
-        image: {{ .Values.database.image.repository }}:{{ .Values.database.image.tag }}
-        imagePullPolicy: {{ .Values.database.image.pullPolicy }}
-        ports:
-        - containerPort: 5432
-        env:
-        - name: POSTGRES_USER
-          valueFrom:
-            configMapKeyRef:
-              name: cinemaabyss-config
-              key: DB_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: cinemaabyss-secrets
-              key: DB_PASSWORD
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: cinemaabyss-config
-              key: DB_NAME
-        resources:
-          {{- toYaml .Values.database.resources | nindent 10 }}
-        volumeMounts:
-        - name: postgres-data
-          mountPath: /var/lib/postgresql/data
-        - name: postgres-init-scripts
-          mountPath: /docker-entrypoint-initdb.d
-        readinessProbe:
-          exec:
-            command: ["pg_isready", "-U", "postgres"]
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        livenessProbe:
-          exec:
-            command: ["pg_isready", "-U", "postgres"]
-          initialDelaySeconds: 30
-          periodSeconds: 20
+        - name: postgres
+          image: {{ printf "%s:%v" .Values.database.image.repository .Values.database.image.tag | quote }}
+          imagePullPolicy: {{ .Values.database.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: cinemaabyss-config
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cinemaabyss.databaseSecretName" . }}
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: cinemaabyss-config
+                  key: DB_NAME
+          resources:
+            {{- toYaml .Values.database.resources | nindent 12 }}
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.database.user | quote }}, "-d", {{ .Values.database.name | quote }}]
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.database.user | quote }}, "-d", {{ .Values.database.name | quote }}]
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.database.user | quote }}, "-d", {{ .Values.database.name | quote }}]
+            periodSeconds: 10
+            timeoutSeconds: 2
       volumes:
-      - name: postgres-init-scripts
-        configMap:
-          name: postgres-init-scripts
+        - name: postgres-init-scripts
+          configMap:
+            name: postgres-init-scripts
+        {{- if not .Values.database.persistence.enabled }}
+        - name: postgres-data
+          emptyDir: {}
+        {{- end }}
   {{- if .Values.database.persistence.enabled }}
   volumeClaimTemplates:
-  - metadata:
-      name: postgres-data
-    spec:
-      accessModes: ["{{ .Values.database.persistence.accessMode }}"]
-      resources:
-        requests:
-          storage: {{ .Values.database.persistence.size }}
-  {{- else }}
-      - name: postgres-data
-        emptyDir: {}
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: [{{ .Values.database.persistence.accessMode | quote }}]
+        {{- with .Values.database.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.persistence.size }}
   {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: postgres
-    app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "cinemaabyss.labels" . | nindent 4 }}
 spec:
+  type: ClusterIP
   selector:
     app: postgres
+    app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
-  - port: {{ .Values.database.port }}
-    targetPort: 5432
-  type: ClusterIP
+    - name: postgres
+      port: {{ .Values.database.port }}
+      targetPort: postgres

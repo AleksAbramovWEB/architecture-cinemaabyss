@@ -3,16 +3,16 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: movies-service
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: movies-service
-    app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "cinemaabyss.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.moviesService.replicas }}
   selector:
     matchLabels:
       app: movies-service
+      app.kubernetes.io/instance: {{ .Release.Name }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -20,57 +20,69 @@ spec:
       maxUnavailable: 0
   template:
     metadata:
+      annotations:
+        checksum/config: {{ dict "host" .Values.database.host "port" .Values.database.port "name" .Values.database.name "user" .Values.database.user | toJson | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         app: movies-service
+        {{- include "cinemaabyss.selectorLabels" . | nindent 8 }}
     spec:
+      terminationGracePeriodSeconds: 30
+      {{- include "cinemaabyss.imagePullSecrets" . | nindent 6 }}
       containers:
-      - name: movies-service
-        image: {{ .Values.moviesService.image.repository }}:{{ .Values.moviesService.image.tag }}
-        imagePullPolicy: {{ .Values.moviesService.image.pullPolicy }}
-        ports:
-        - containerPort: {{ .Values.moviesService.service.targetPort }}
-        env:
-        - name: PORT
-          value: "{{ .Values.moviesService.service.targetPort }}"
-        - name: DB_CONNECTION_STRING
-          value: "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable"
-        envFrom:
-        - configMapRef:
-            name: cinemaabyss-config
-        - secretRef:
-            name: cinemaabyss-secrets
-        resources:
-          {{- toYaml .Values.moviesService.resources | nindent 10 }}
-        readinessProbe:
-          httpGet:
-            path: /api/movies/health
-            port: {{ .Values.moviesService.service.targetPort }}
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        livenessProbe:
-          httpGet:
-            path: /api/movies/health
-            port: {{ .Values.moviesService.service.targetPort }}
-          initialDelaySeconds: 15
-          periodSeconds: 20
-      restartPolicy: Always
-      imagePullSecrets:
-        - name: dockerconfigjson
+        - name: movies-service
+          image: {{ printf "%s:%v" .Values.moviesService.image.repository .Values.moviesService.image.tag | quote }}
+          imagePullPolicy: {{ .Values.moviesService.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.moviesService.service.targetPort }}
+          env:
+            - name: PORT
+              value: {{ .Values.moviesService.service.targetPort | quote }}
+            - name: DB_CONNECTION_STRING
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable"
+          envFrom:
+            - configMapRef:
+                name: cinemaabyss-config
+            - secretRef:
+                name: {{ include "cinemaabyss.databaseSecretName" . }}
+          resources:
+            {{- toYaml .Values.moviesService.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /api/movies/health
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/movies/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/movies/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: movies-service
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: movies-service
-    app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "cinemaabyss.labels" . | nindent 4 }}
 spec:
+  type: {{ .Values.moviesService.service.type }}
   selector:
     app: movies-service
+    app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
-  - port: {{ .Values.moviesService.service.port }}
-    targetPort: {{ .Values.moviesService.service.targetPort }}
-  type: {{ .Values.moviesService.service.type }}
+    - name: http
+      port: {{ .Values.moviesService.service.port }}
+      targetPort: http
 {{- end }}

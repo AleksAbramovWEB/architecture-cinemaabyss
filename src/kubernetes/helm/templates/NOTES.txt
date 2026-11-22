@@ -1,0 +1,13 @@
+Release {{ .Release.Name }} installed in namespace {{ .Release.Namespace }}.
+
+Check readiness:
+  kubectl -n {{ .Release.Namespace }} get pods,services,ingress
+
+{{ if .Values.ingress.enabled -}}
+API: {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.global.domain }}/api/movies
+{{ if .Values.ingress.tls.enabled -}}
+Ingress uses the existing TLS secret {{ .Values.ingress.tls.secretName }}.
+For a local certificate use scripts/kubernetes/create-local-tls.sh --namespace {{ .Release.Namespace }}.
+{{ end }}{{ end -}}
+After changing config values, Helm upgrades roll out deployments via checksum annotations.
+Persistent data is retained on uninstall; see README.md before deleting PVCs.

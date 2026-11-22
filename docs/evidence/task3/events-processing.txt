@@ -1,6 +1,0 @@
-2026-11-22T12:38:41.032Z  INFO 1 --- [events-service] [processor-0-C-1] ru.cinemaabyss.events.EventConsumer      : Processed event id=b6a83b44-b4b8-4597-b1a7-4141557c8256 type=movie topic=movie-events partition=0 offset=0
-2026-11-22T12:38:41.161Z  INFO 1 --- [events-service] [processor-0-C-1] ru.cinemaabyss.events.EventConsumer      : Processed event id=2a40dae8-998e-496e-a0ce-667095c6ba30 type=user topic=user-events partition=0 offset=0
-2026-11-22T12:38:41.299Z  INFO 1 --- [events-service] [processor-0-C-1] ru.cinemaabyss.events.EventConsumer      : Processed event id=cdf97914-fa95-405a-bea3-5b1e71477b00 type=payment topic=payment-events partition=0 offset=0
-2026-11-22T12:38:41.939Z  INFO 1 --- [events-service] [processor-0-C-1] ru.cinemaabyss.events.EventConsumer      : Processed event id=97b31f39-55d1-4d07-89af-360b232138b7 type=movie topic=movie-events partition=0 offset=1
-2026-11-22T12:38:42.078Z  INFO 1 --- [events-service] [processor-0-C-1] ru.cinemaabyss.events.EventConsumer      : Processed event id=b6a2ca6f-e762-4a7e-a9b4-7504a0e4a1cc type=user topic=user-events partition=0 offset=1
-2026-11-22T12:38:42.210Z  INFO 1 --- [events-service] [processor-0-C-1] ru.cinemaabyss.events.EventConsumer      : Processed event id=98b3856b-0d3d-46a5-8e68-cd6eb45074b7 type=payment topic=payment-events partition=0 offset=1

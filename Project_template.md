@@ -205,8 +205,6 @@ mvn -f src/microservices/events/pom.xml verify
 
 После проверки восстановлены `GRADUAL_MIGRATION=true`, `MOVIES_MIGRATION_PERCENT=50`. Соотношение при 50% меняется от прогона к прогону.
 
-Сохранены [результат проверки миграции](docs/evidence/task2/migration.json), [сводка тестов](docs/evidence/task2/postman-summary.json), [фактические логи обработки](docs/evidence/task2/kafka-processing.txt) и [состояние топиков из API Kafka UI](docs/evidence/task2/kafka-topics.json).
-
 Скриншот HTML-отчёта выполненных Postman-тестов:
 
 ![Postman: 27 запросов, 50 проверок, 0 ошибок](docs/evidence/task2/postman-tests.png)
@@ -237,8 +235,6 @@ ghcr.io/aleksabramovweb/architecture-cinemaabyss/proxy-service:cinema
 ```
 
 [Успешный запуск GitHub Actions](https://github.com/AleksAbramovWEB/architecture-cinemaabyss/actions/runs/45023522935) подтвердил Java-тесты, API-тесты и публикацию всех четырёх образов. Образы доступны анонимно; Kubernetes загружает их непосредственно из GHCR. Для частного registry можно создать `imagePullSecret` отдельно и добавить ссылку в Pod spec; файл `dockerconfigsecret.yaml` содержит только необязательный пустой пример, а не учётные данные.
-
-[Сводка успешного CI](docs/evidence/task3/github-actions.json) содержит commit SHA и результаты всех семи jobs.
 
 Этот pipeline обеспечивает проверку и доставку контейнеров в registry. Применение в локальный Kubernetes выполняется командами ниже; GitHub runner не получает доступ к личному minikube.
 
@@ -327,98 +323,101 @@ kubectl -n cinemaabyss rollout status deployment/proxy-service
 
 ## Результаты и подтверждения
 
-Проверено 22.11.2026 в отдельном minikube-профиле `cinemaabyss`, Kubernetes v1.33.1, ARM64. Все восемь Pod приложения и инфраструктуры находятся в Ready/Running; Proxy работает в двух экземплярах. В [списке образов](docs/evidence/task3/running-images.json) сохранены фактические image IDs загруженных GHCR-контейнеров.
+Проверено 22.11.2026 в отдельном minikube-профиле `cinemaabyss`, Kubernetes v1.33.1, ARM64. Все восемь Pod приложения и инфраструктуры находятся в Ready/Running; Proxy работает в двух экземплярах.
 
 - HTTPS `/api/movies`: **200**, JSON со списком фильмов, `X-Cinemaabyss-Upstream: movies-service`. CA и имя сертификата проверяются.
 - Kubernetes Postman: **27 запросов, 50 проверок, 0 ошибок**, включая health-check, исходные сценарии Events и папку Events via API Gateway. Все внешние запросы физически проходят через ingress и Proxy.
 - Consumer Events обработал **6 событий** в трёх топиках, по два каждого типа.
 - ConfigMap + rollout: при `100` все 20 запросов направлены в Movies; при `0` все 20 — в монолит; после возврата `100` ещё 20 запросов подтвердили Movies.
 
-Сохранены [Pod status](docs/evidence/task3/pods.txt), [сводка Postman](docs/evidence/task3/postman-summary.json), [CLI-отчёт](docs/evidence/task3/postman-output.txt), [проверка миграции](docs/evidence/task3/migration.json), [HTTP-заголовки](docs/evidence/task3/movies-headers.txt), [JSON ответа](docs/evidence/task3/movies.json) и [строки consumer-лога](docs/evidence/task3/events-processing.txt). Скриншоты ниже показывают экспорт фактического вывода curl/kubectl и сформированный Newman HTML-отчёт.
+Скриншоты ниже показывают экспорт фактического вывода curl и kubectl.
 
 ![Ответ HTTPS API в Kubernetes](docs/evidence/task3/movies-response.png)
 
 ![Обработка событий Events Service в Kubernetes](docs/evidence/task3/events-processing.png)
 
-![Kubernetes Postman: 27 запросов, 50 проверок, ошибок нет](docs/evidence/task3/kubernetes-postman.png)
-
 # Задание 4
-Для простоты дальнейшего обновления и развертывания вам как архитектуру необходимо так же реализовать helm-чарты для прокси-сервиса и проверить работу 
 
-Для этого:
-1. Перейдите в директорию helm и отредактируйте файл values.yaml
+## Helm chart
 
-```yaml
-# Proxy service configuration
-proxyService:
-  enabled: true
-  image:
-    repository: ghcr.io/db-exp/cinemaabysstest/proxy-service
-    tag: latest
-    pullPolicy: Always
-  replicas: 1
-  resources:
-    limits:
-      cpu: 300m
-      memory: 256Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
-  service:
-    port: 80
-    targetPort: 8000
-    type: ClusterIP
-```
+Готовый chart находится в [src/kubernetes/helm](src/kubernetes/helm). Он устанавливает весь учебный стенд: Proxy, Events, монолит, Movies, PostgreSQL, Kafka и ZooKeeper. Подробные параметры и порядок развёртывания приведены в [README чарта](src/kubernetes/helm/README.md).
 
-- Вместо ghcr.io/db-exp/cinemaabysstest/proxy-service напишите свой путь до образа для всех сервисов
-- для imagePullSecret проставьте свое значение (скопируйте из конфигурации kubernetes)
-  ```yaml
-  imagePullSecrets:
-      dockerconfigjson: ewoJImF1dGhzIjogewoJCSJnaGNyLmlvIjogewoJCQkiYXV0aCI6ICJaR0l0Wlhod09tZG9jRjl2UTJocVZIa3dhMWhKVDIxWmFVZHJOV2hRUW10aFVXbFZSbTVaTjJRMFNYUjRZMWM9IgoJCX0KCX0sCgkiY3JlZHNTdG9yZSI6ICJkZXNrdG9wIiwKCSJjdXJyZW50Q29udGV4dCI6ICJkZXNrdG9wLWxpbnV4IiwKCSJwbHVnaW5zIjogewoJCSIteC1jbGktaGludHMiOiB7CgkJCSJlbmFibGVkIjogInRydWUiCgkJfQoJfSwKCSJmZWF0dXJlcyI6IHsKCQkiaG9va3MiOiAidHJ1ZSIKCX0KfQ==
-  ```
+Основные файлы:
 
-2. В папке ./templates/services заполните шаблоны для proxy-service.yaml и events-service.yaml (опирайтесь на свою kubernetes конфигурацию - смысл helm'а сделать шаблоны для быстрого обновления и установки)
+- [values.yaml](src/kubernetes/helm/values.yaml): собственные публичные GHCR-образы с тегом `cinema`, replicas, ресурсы, порты, JVM options, TLS, persistent storage и процент миграции.
+- [Proxy Deployment/Service](src/kubernetes/helm/templates/services/proxy-service.yaml) и [Events Deployment/Service](src/kubernetes/helm/templates/services/events-service.yaml): полностью заполненные шаблоны на основе проверенной конфигурации задания 3.
+- [ConfigMap](src/kubernetes/helm/templates/configmap.yaml): согласованные адреса `movies-service`, `events-service`, Kafka и остальных сервисов.
+- [Ingress](src/kubernetes/helm/templates/ingress.yaml): HTTPS для `cinemaabyss.example.com`, все запросы через Proxy, включая Events. Backend использует Service-порт из values; по умолчанию Proxy Service 80 → container 8000.
+- [values.schema.json](src/kubernetes/helm/values.schema.json): проверка типов, портов, процента `0..100` и параметров одноузлового брокера; дополнительные проверки несовместимых настроек выполняются helper-шаблоном.
 
-```yaml
-template:
-    metadata:
-      labels:
-        app: proxy-service
-    spec:
-      containers:
-       Тут ваша конфигурация
-```
+Namespace определяется `--namespace`, а labels/selectors учитывают release instance. Пример рассчитан на один release в namespace; другой экземпляр может использовать отдельный namespace и другое имя ingress. По умолчанию `imagePullSecret` не создаётся, поскольку образы публичные. Для частных образов предусмотрены существующий Secret либо локально переданный Docker config; учётные данные из стартового шаблона удалены.
 
-3. Проверьте установку
-Сначала удалим установку руками
+Checksum-аннотации обновляют только зависящие от настройки Pod. Изменение процента миграции автоматически вызывает rolling update Proxy, без ручного `rollout restart` и без перезапуска БД или consumer. Для Kafka сохранены проверенные TCP probes, ограниченный heap, согласованное хранение Kafka/ZooKeeper и создание топиков через Events Kafka Admin.
+
+## Установка и обновление
+
+Нужен подготовленный кластер и ingress-nginx из задания 3. Чистую проверку можно выполнять в отдельном временном minikube-профиле, чтобы не удалять данные ручной установки. Команды из корня репозитория:
 
 ```bash
-kubectl delete all --all -n cinemaabyss
-kubectl delete  namespace cinemaabyss
-```
-Запустите 
-```bash
-helm install cinemaabyss .\src\kubernetes\helm --namespace cinemaabyss --create-namespace
-```
-Если в процессе будет ошибка
-```code
-[2025-04-08 21:43:38,780] ERROR Fatal error during KafkaServer startup. Prepare to shutdown (kafka.server.KafkaServer)
-kafka.common.InconsistentClusterIdException: The Cluster ID OkOjGPrdRimp8nkFohYkCw doesn't match stored clusterId Some(sbkcoiSiQV2h_mQpwy05zQ) in meta.properties. The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.
+helm lint src/kubernetes/helm --strict
+helm template cinemaabyss src/kubernetes/helm --namespace cinemaabyss > /tmp/cinemaabyss-helm.yaml
+
+kubectl create namespace cinemaabyss --dry-run=client -o yaml | kubectl apply -f -
+bash scripts/kubernetes/create-local-tls.sh --namespace cinemaabyss
+kubectl apply --dry-run=server -f /tmp/cinemaabyss-helm.yaml
+helm install cinemaabyss ./src/kubernetes/helm \
+  --namespace cinemaabyss --create-namespace --wait --atomic --timeout 10m
+helm status cinemaabyss --namespace cinemaabyss
+kubectl --namespace cinemaabyss get pods,services,ingress
 ```
 
-Проверьте развертывание:
-```bash
-kubectl get pods -n cinemaabyss
-minikube tunnel
-```
+Для существующей ручной установки нужно выбрать чистый namespace/кластер или предварительно сбросить именно учебный стенд по инструкции задания. Не следует пытаться присвоить Helm существующие ресурсы с чужой ownership metadata. При совместном размещении двух ingress используйте разные `global.domain` и соответствующие TLS-сертификаты.
 
-Потом вызовите 
-https://cinemaabyss.example.com/api/movies
-и приложите скриншот развертывания helm и вывода https://cinemaabyss.example.com/api/movies
-
-## Удаляем все
+После настройки локального маршрута к ingress:
 
 ```bash
-kubectl delete all --all -n cinemaabyss
-kubectl delete namespace cinemaabyss
+curl --resolve cinemaabyss.example.com:443:127.0.0.1 \
+  --cacert .local/cinemaabyss/tls/ca.crt \
+  https://cinemaabyss.example.com/api/movies
 ```
+
+`--resolve` не нужен при настроенном DNS/hosts. Проверка CA остаётся включённой. При проверке во временном профиле использовался его отдельный CA в `.local/cinemaabyss-helm/tls`; TCP-проброс был ограничен временем проверки.
+
+Пример обновления и отката:
+
+```bash
+helm upgrade cinemaabyss ./src/kubernetes/helm --namespace cinemaabyss \
+  --set config.moviesMigrationPercent=0 --wait --atomic --timeout 10m
+helm history cinemaabyss --namespace cinemaabyss
+helm rollback cinemaabyss 1 --namespace cinemaabyss --wait --timeout 10m
+```
+
+Перед rollback выбирается нужная ревизия из history. В первоначальной установке и после проверенного rollback значение процента равно 100.
+
+## Проверка данных и очистка
+
+```bash
+helm uninstall cinemaabyss --namespace cinemaabyss --wait
+```
+
+Uninstall сохраняет PostgreSQL PVC и пару Kafka/ZooKeeper PVC. Повторная установка с тем же release/namespace использует их. Kafka и ZooKeeper необходимо сохранять или сбрасывать вместе, чтобы их cluster ID оставался согласованным. Полный сброс одноразового стенда выполняется удалением только его namespace/профиля; он удаляет данные проверки.
+
+После проверки следует удалить также вспомогательный HTTPS-проброс и временный minikube-профиль. Эти контейнеры не входят в release и не удаляются командой `helm uninstall`.
+
+## Результаты проверки
+
+Чистая установка через `helm install --wait --atomic` успешна: chart `cinemaabyss-0.2.0`, восемь Pod Ready/Running. Helm lint, шаблоны, упаковка chart и проверка ресурсов Kubernetes API проходят.
+
+- Postman через HTTPS ingress: **27 запросов, 50 проверок, 0 ошибок**.
+- При значении `100` все 20 запросов `/api/movies` направлены в Movies; после `helm upgrade` на `0` все 20 — в монолит; `helm rollback` вернул 20 из 20 в Movies.
+- Pod UID всех шести остальных workloads сохранились: процент миграции изменяет только Proxy.
+
+Повторная установка после `helm uninstall` также успешна. Все три PVC остались Bound; сохранились семь записей фильмов и Kafka cluster ID. После reinstall Events принял и обработал новое событие с offset `2`.
+
+Скриншоты показывают экспорт фактического вывода Helm/kubectl/curl:
+
+![Helm release и готовые Pod](docs/evidence/task4/helm-deployment.png)
+
+![HTTPS-ответ списка фильмов после Helm-установки](docs/evidence/task4/movies-response.png)
+
+После проверки временный release удалён, HTTPS-проброс и minikube-профиль `cinemaabyss-helm` удалены. Созданных для проверки контейнеров не осталось. Прежние тома `cinemaabyss` и `architecture-cinemaabyss_postgres-data` сохранены.
