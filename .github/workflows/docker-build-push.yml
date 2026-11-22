@@ -3,6 +3,12 @@ name: Build, Test and Publish
 on:
   push:
     branches: [cinema, main, master]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - 'docker-compose.yml'
   pull_request:
     branches: [cinema, main, master]
   workflow_dispatch:

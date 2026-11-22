@@ -101,6 +101,9 @@ metadata:
   labels:
     app: kafka
 spec:
+  # Kafka's API probe follows the advertised kafka:9092 address. Publish the broker
+  # during startup too, otherwise Service readiness and this probe wait on each other.
+  publishNotReadyAddresses: true
   ports:
   - port: 9092
     name: kafka
@@ -157,8 +160,6 @@ spec:
           value: "9092"
         - name: KAFKA_ZOOKEEPER_CONNECT
           value: zookeeper:2181
-        - name: KAFKA_CREATE_TOPICS
-          value: "movie-events:1:1,user-events:1:1,payment-events:1:1"
         - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
           value: "true"
         - name: KAFKA_BROKER_ID
@@ -177,16 +178,16 @@ spec:
         - name: kafka-data
           mountPath: /kafka
         startupProbe:
-          exec:
-            command: ["sh", "-ec", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+          tcpSocket:
+            port: 9092
           periodSeconds: 10
-          timeoutSeconds: 10
+          timeoutSeconds: 2
           failureThreshold: 30
         readinessProbe:
-          exec:
-            command: ["sh", "-ec", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+          tcpSocket:
+            port: 9092
           periodSeconds: 10
-          timeoutSeconds: 10
+          timeoutSeconds: 2
         livenessProbe:
           tcpSocket:
             port: 9092
