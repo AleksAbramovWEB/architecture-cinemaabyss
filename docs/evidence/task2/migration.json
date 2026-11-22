@@ -1,0 +1,42 @@
+{
+  "checked_at": "2026-11-22T11:30:41.977419+00:00",
+  "cases": [
+    {
+      "gradual_migration": true,
+      "movies_migration_percent": 0,
+      "requests": 100,
+      "upstreams": {
+        "monolith": 100
+      }
+    },
+    {
+      "gradual_migration": true,
+      "movies_migration_percent": 50,
+      "requests": 100,
+      "upstreams": {
+        "monolith": 54,
+        "movies-service": 46
+      }
+    },
+    {
+      "gradual_migration": true,
+      "movies_migration_percent": 100,
+      "requests": 100,
+      "upstreams": {
+        "movies-service": 100
+      }
+    },
+    {
+      "gradual_migration": false,
+      "movies_migration_percent": 0,
+      "requests": 100,
+      "upstreams": {
+        "movies-service": 100
+      }
+    }
+  ],
+  "restored": {
+    "gradual_migration": true,
+    "movies_migration_percent": 50
+  }
+}

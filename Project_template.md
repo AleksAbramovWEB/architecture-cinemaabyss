@@ -36,7 +36,7 @@ java -jar /path/to/plantuml.jar -charset UTF-8 -tsvg docs/architecture/to-be.pum
 | Монетизация | **Commerce Service**, Go + Commerce DB, PostgreSQL | Модули платежей, подписок и скидок; тарифы и право просмотра по подписке. Интеграции с платёжными провайдерами, лояльностью и маркетплейсами. |
 | Просмотр контента | **Playback Service**, Go + Playback DB, PostgreSQL | Видео, соответствие фильма источникам, права поставщиков, сессии просмотра и выдача разрешённого URL потока. Сами видеоданные поступают от поставщиков/CDN. |
 
-Платежи, подписки и скидки объединены в один сервис монетизации: их правила тесно связаны, а команду из пяти Go-разработчиков не стоит сразу нагружать отдельным развёртыванием каждой сущности. Внутренние модули отделяют платёжную логику от управления подпиской и акциями. При необходимости их можно выделить позже. Выбранный Go соответствует компетенциям команды; новых языков в серверную часть не добавляется.
+Платежи, подписки и скидки объединены в один сервис монетизации: их правила тесно связаны, а команду из пяти Go-разработчиков не стоит сразу нагружать отдельным развёртыванием каждой сущности. Внутренние модули отделяют платёжную логику от управления подпиской и акциями. При необходимости их можно выделить позже. Для доменных сервисов сохраняется Go в соответствии с компетенциями команды. Инфраструктурные Proxy и Events в задании 2 реализуются отдельно на Java 21 / Spring Boot.
 
 Каждый сервис — единственный владелец своих данных и миграций. В To-Be у него отдельная логическая БД и роль PostgreSQL; доступ к таблицам других доменов запрещён. На старте эти БД могут находиться в одном PostgreSQL-кластере, но это сохраняет общую точку отказа и предел масштабирования. Нагруженные домены можно переносить на отдельные кластеры независимо. Междоменные ссылки передаются как идентификаторы; внешних ключей между базами и межсервисных SQL JOIN нет.
 
@@ -91,55 +91,129 @@ Recommendations читает события и в фоне взаимодейс�
 
 # Задание 2
 
-### 1. Proxy
-Команда КиноБездны уже выделила сервис метаданных о фильмах movies и вам необходимо реализовать бесшовный переход с применением паттерна Strangler Fig в части реализации прокси-сервиса (API Gateway), с помощью которого можно будет постепенно переключать траффик, используя фиче-флаг.
+## 1. Proxy — Spring Boot / Java 21
 
+[Исходники Proxy](src/microservices/proxy) — самостоятельное Maven-приложение на Spring Boot 3.5.16 и Java 21. Multi-stage Dockerfile собирает исполняемый JAR и запускает его в JRE 21. Сервис не содержит бизнес-логики монолита и работает как HTTP-фасад для Strangler Fig.
 
-Реализуйте сервис на любом языке программирования в ./src/microservices/proxy.
-Конфигурация для запуска сервиса через docker-compose уже добавлена
-```yaml
-  proxy-service:
-    build:
-      context: ./src/microservices/proxy
-      dockerfile: Dockerfile
-    container_name: cinemaabyss-proxy-service
-    depends_on:
-      - monolith
-      - movies-service
-      - events-service
-    ports:
-      - "8000:8000"
-    environment:
-      PORT: 8000
-      MONOLITH_URL: http://monolith:8080
-      #монолит
-      MOVIES_SERVICE_URL: http://movies-service:8081 #сервис movies
-      EVENTS_SERVICE_URL: http://events-service:8082 
-      GRADUAL_MIGRATION: "true" # вкл/выкл простого фиче-флага
-      MOVIES_MIGRATION_PERCENT: "50" # процент миграции
-    networks:
-      - cinemaabyss-network
+| Маршрут | Назначение |
+| --- | --- |
+| `GET /health` | Локальный health Proxy: `Strangler Fig Proxy is healthy`. |
+| `/api/events` и его подмаршруты | Events Service, независимо от флага миграции фильмов. |
+| `/api/movies/health` | Всегда Movies Service: в монолите такого health-check нет. |
+| `/api/movies` и его подмаршруты | Выбор монолита или Movies по feature flag. |
+| Остальные маршруты | Монолит; сохраняются существующие API пользователей, платежей и подписок. |
+
+При пересылке сохраняются метод, исходные path/query, тело, статус ответа и сквозные HTTP-заголовки. Hop-by-hop заголовки не передаются. Автоматического следования redirect, повторов запросов и fallback для записей нет: это предотвращает скрытое повторное создание платежа или фильма. Ошибка соединения возвращает `502`, таймаут — `504`. Заголовок ответа `X-Cinemaabyss-Upstream` и лог Proxy показывают фактически выбранный сервис.
+
+| `GRADUAL_MIGRATION` | `MOVIES_MIGRATION_PERCENT` | Маршрутизация запросов фильмов |
+| --- | --- | --- |
+| `true` | `0` | Только монолит. |
+| `true` | `1–99` | Независимый вероятностный выбор для каждого запроса. Доля является ожидаемой, а не точной квотой на небольшую выборку. |
+| `true` | `100` | Только Movies. |
+| `false` | Любое допустимое значение | Только Movies: выключение постепенной миграции означает завершённый переход. Для отката используются `true` и `0`. |
+
+Допустимый процент — целое число от 0 до 100; некорректные адреса и настройки приводят к ошибке старта. Адреса задаются `MONOLITH_URL`, `MOVIES_SERVICE_URL`, `EVENTS_SERVICE_URL`, порт — `PORT` (по умолчанию 8000). Таймауты настраиваются `PROXY_CONNECT_TIMEOUT` и `PROXY_REQUEST_TIMEOUT`; полный список есть в [README сервиса](src/microservices/proxy/README.md). Изменение переменной окружения применяется пересозданием контейнера.
+
+## 2. Events — producer и consumer Kafka
+
+[Исходники Events](src/microservices/events) — отдельное Spring Boot 3.5.16 / Java 21 приложение со Spring Kafka. Подключение задаётся `KAFKA_BROKERS`, порт — `PORT` (8082), группа потребителей — `KAFKA_GROUP_ID`. Сервису не нужна PostgreSQL.
+
+| API | Топик |
+| --- | --- |
+| `POST /api/events/movie` | `movie-events` |
+| `POST /api/events/user` | `user-events` |
+| `POST /api/events/payment` | `payment-events` |
+| `GET /api/events/health` | HTTP health: `{"status":true}`. |
+
+Запросы проверяются по [спецификации API](api-specification.yaml). В конверт добавляются уникальный UUID, тип и серверное время; исходные данные помещаются в `payload`. Ответ `201` возвращается только после подтверждения Kafka и содержит `status: success`, реальные `partition`, `offset` и `event`. Некорректный запрос даёт `400`, неподтверждённая публикация — `500`. Повторный HTTP-запрос после таймаута может создать отдельное событие: HTTP-идемпотентность не заявляется.
+
+Собственный consumer подписан на все три топика и после обработки пишет `Processed event id=... type=... topic=... partition=... offset=...`. Offset фиксируется после успешной обработки. Producer использует `acks=all` и Kafka-идемпотентность; обработка допускает повторную доставку. Для MVP обработка состоит в логировании, бизнес-состояние не изменяется. В частности, тестовое событие платежа не активирует подписку. Подробности и ограничения описаны в [README Events](src/microservices/events/README.md).
+
+В [Compose](docker-compose.yml) Events включён в общую сеть, ожидает healthy Kafka; монолит и Movies ожидают healthy PostgreSQL. Kafka UI ожидает брокер. Три топика создаются при старте, если их ещё нет. Учебные настройки — одна партиция и одна реплика; HTTP health Events отражает работу приложения, а не непрерывную доступность Kafka.
+
+## Запуск и проверка
+
+Из корня проекта:
+
+```bash
+docker compose up -d --build
+docker compose ps
+curl http://localhost:8000/health
+curl -i http://localhost:8000/api/movies
+curl http://localhost:8000/api/events/health
 ```
 
-- После реализации запустите postman тесты - они все должны быть зеленые (кроме events).
-- Отправьте запросы к API Gateway:
-   ```bash
-   curl http://localhost:8000/api/movies
-   ```
-- Протестируйте постепенный переход, изменив переменную окружения MOVIES_MIGRATION_PERCENT в файле docker-compose.yml.
+Дождаться готовности HTTP-сервисов; health Kafka и PostgreSQL учитываются Compose. Проверка feature flag с пересозданием только Proxy:
 
+```bash
+MOVIES_MIGRATION_PERCENT=0 docker compose up -d --no-deps --force-recreate proxy-service
+curl -i http://localhost:8000/api/movies
 
-### 2. Kafka
- Вам как архитектуру нужно также проверить гипотезу насколько просто реализовать применение Kafka в данной архитектуре.
+MOVIES_MIGRATION_PERCENT=100 docker compose up -d --no-deps --force-recreate proxy-service
+curl -i http://localhost:8000/api/movies
 
-Для этого нужно сделать MVP сервис events, который будет при вызове API создавать и сам же читать сообщения в топике Kafka.
+MOVIES_MIGRATION_PERCENT=50 docker compose up -d --no-deps --force-recreate proxy-service
+curl -i http://localhost:8000/api/movies
+```
 
-    - Разработайте сервис на любом языке программирования с consumer'ами и producer'ами.
-    - Реализуйте простой API, при вызове которого будут создаваться события User/Payment/Movie и обрабатываться внутри сервиса с записью в лог
-    - Добавьте в docker-compose новый сервис, kafka там уже есть
+После каждого пересоздания нужно дождаться `/health`. В Compose значения по умолчанию — `GRADUAL_MIGRATION=true`, `MOVIES_MIGRATION_PERCENT=50`; их также можно менять непосредственно в `docker-compose.yml`. Маршрутизацию видно по `X-Cinemaabyss-Upstream: monolith` либо `movies-service`. Во время этого этапа оба обработчика фильмов используют одни таблицы PostgreSQL, как в стартовом проекте; изоляция данных остаётся отдельным этапом миграции.
 
-Необходимые тесты для проверки этого API вызываются при запуске npm run test:local из папки tests/postman 
-Приложите скриншот тестов и скриншот состояния топиков Kafka из UI http://localhost:8090 
+Автоматическая проверка из корня проекта: `python3 tests/check-migration.py`. Скрипт пересоздаёт Proxy для случаев `true/0`, `true/50`, `true/100`, `false/0`, проверяет по 100 ответов `/api/movies` и в конце возвращает конфигурацию `true/50`. Для записи отчёта можно указать `--output /tmp/migration.json`.
+
+Публикация через Gateway и обработка собственным consumer:
+
+```bash
+curl -i -X POST http://localhost:8000/api/events/movie \
+  -H 'Content-Type: application/json' \
+  -d '{"movie_id":1,"title":"Test Movie","action":"viewed","user_id":1}'
+docker compose logs events-service
+```
+
+Все Postman-тесты:
+
+```bash
+cd tests/postman
+npm ci
+npm run test:local
+```
+
+В зависимости добавлены совместимые Newman 6 и `newman-reporter-htmlextra`: стандартная команда создаёт CLI, HTML и JUnit-отчёты в `tests/postman/reports`. Существующие проверки сохранены; добавлена папка **Events via API Gateway**, проверяющая три типа событий, health, конверт, Kafka acknowledgement и отклонение некорректного запроса. Уникальные username/email делают повторные прогоны независимыми от старых тестовых пользователей.
+
+Модульные и интеграционные Java-тесты (требуются Maven и JDK 21):
+
+```bash
+mvn -f src/microservices/proxy/pom.xml verify
+mvn -f src/microservices/events/pom.xml verify
+```
+
+Тесты Proxy используют HTTP-заглушки, Events — также embedded Kafka без Docker. Отдельно весь стенд проверяется с Kafka 2.7 из исходного Compose.
+
+## Результаты проверки
+
+Проверено 22.11.2026 на локальном Docker-стенде с исходной Kafka 2.7. Оба Java-контейнера работают на Temurin 21.0.13.
+
+- Java-тесты: **33 успешно**, из них 16 для Proxy и 17 для Events, включая embedded Kafka.
+- `npm run test:local`: **27 запросов, 50 проверок, 0 ошибок**; проверены все исходные папки и Events через Gateway.
+- Собственный consumer обработал **6 событий**: по два в `movie-events`, `user-events`, `payment-events`. В Kafka UI видны сообщения и синхронные реплики.
+
+| Флаг / процент | Запросов | В монолит | В Movies |
+| --- | --- | --- | --- |
+| `true / 0` | 100 | 100 | 0 |
+| `true / 50` | 100 | 54 | 46 |
+| `true / 100` | 100 | 0 | 100 |
+| `false / 0` | 100 | 0 | 100 |
+
+После проверки восстановлены `GRADUAL_MIGRATION=true`, `MOVIES_MIGRATION_PERCENT=50`. Соотношение при 50% меняется от прогона к прогону.
+
+Сохранены [результат проверки миграции](docs/evidence/task2/migration.json), [сводка тестов](docs/evidence/task2/postman-summary.json), [фактические логи обработки](docs/evidence/task2/kafka-processing.txt) и [состояние топиков из API Kafka UI](docs/evidence/task2/kafka-topics.json).
+
+Скриншот HTML-отчёта выполненных Postman-тестов:
+
+![Postman: 27 запросов, 50 проверок, 0 ошибок](docs/evidence/task2/postman-tests.png)
+
+Скриншот Kafka UI после прогона, `http://localhost:8090`:
+
+![Kafka UI: три топика событий с сообщениями](docs/evidence/task2/kafka-topics.png)
 
 # Задание 3
 

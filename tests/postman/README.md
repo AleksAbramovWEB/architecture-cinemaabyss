@@ -32,9 +32,14 @@ The tests cover the following services:
    - Health check
    - Proxying requests to other services
 
+5. **Events via API Gateway**
+   - Health check and all three event types through the proxy
+   - Event envelope and Kafka partition/offset acknowledgement
+   - Rejection of invalid event requests
+
 ## Prerequisites
 
-- Node.js (v14 or later)
+- Node.js (v16 or later, required by Newman 6)
 - npm (v6 or later)
 
 ## Installation
@@ -44,7 +49,7 @@ The tests cover the following services:
 cd tests/postman
 
 # Install dependencies
-npm install
+npm ci
 ```
 
 ## Running Tests
@@ -63,16 +68,19 @@ npm run test:docker
 
 ```bash
 # Run only Monolith Service tests
-npm run test:monolith
+node run-tests.js --folder "Monolith Service"
 
 # Run only Movies Microservice tests
-npm run test:movies
+node run-tests.js --folder "Movies Microservice"
 
 # Run only Events Microservice tests
-npm run test:events
+node run-tests.js --folder "Events Microservice"
 
 # Run only Proxy Service tests
-npm run test:proxy
+node run-tests.js --folder "Proxy Service"
+
+# Run only events through the API Gateway
+node run-tests.js --folder "Events via API Gateway"
 ```
 
 ### Advanced Usage

@@ -21,7 +21,7 @@ System_Boundary(cinema, "Кинобездна") {
     Container(mobile, "Мобильное приложение", "iOS / Android", "Компактные ответы и экраны")
     Container(tv, "Smart TV-приложение", "Smart TV", "Каталог и управление плеером")
 
-    Container(gateway, "API Gateway / Proxy", "Go / HTTP", "Единая точка входа в бизнес-API.\nПроверка токенов, маршрутизация, Strangler Fig.\nМодуль BFF: представления Web / Mobile / TV.")
+    Container(gateway, "API Gateway / Proxy", "Java 21 / Spring Boot / HTTP", "Единая точка входа в бизнес-API.\nПроверка токенов, маршрутизация, Strangler Fig.\nМодуль BFF: представления Web / Mobile / TV.")
 
     Container(users, "Users Service", "Go / REST", "Пользователи и доступ.\nАккаунты, аутентификация, профили; выпуск токенов.")
     ContainerDb(users_db, "Users DB", "PostgreSQL", "Аккаунты и профили")
