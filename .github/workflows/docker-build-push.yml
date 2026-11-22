@@ -1,85 +1,141 @@
-name: Docker Build and Push
+name: Build, Test and Publish
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
-    paths:
-      - 'src/**'
-      - '.github/workflows/docker-build-push.yml'
+    branches: [cinema, main, master]
+  pull_request:
+    branches: [cinema, main, master]
+  workflow_dispatch:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
-  MONOLITH_IMAGE_NAME: ${{ github.repository }}/monolith
-  MOVIES_SERVICE_IMAGE_NAME: ${{ github.repository }}/movies-service
-  EVENTS_SERVICE_IMAGE_NAME: ${{ github.repository }}/events-service
-  PROXY_SERVICE_IMAGE_NAME: ${{ github.repository }}/proxy-service
 
 jobs:
-  build-and-push:
+  java-tests:
+    name: Java 21 tests / ${{ matrix.service }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [proxy, events]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: src/microservices/${{ matrix.service }}/pom.xml
+
+      - name: Verify service
+        working-directory: src/microservices/${{ matrix.service }}
+        run: mvn --batch-mode --no-transfer-progress verify
+
+      - name: Upload Java test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: java-tests-${{ matrix.service }}
+          path: src/microservices/${{ matrix.service }}/target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  api-tests:
+    name: Compose and Postman
+    needs: java-tests
+    uses: ./.github/workflows/api-tests.yml
+
+  build-and-push:
+    name: Publish / ${{ matrix.service }}
+    needs: api-tests
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name == 'release' ||
+       github.ref == 'refs/heads/cinema' ||
+       github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: monolith
+            context: ./src/monolith
+          - service: movies-service
+            context: ./src/microservices/movies
+          - service: events-service
+            context: ./src/microservices/events
+          - service: proxy-service
+            context: ./src/microservices/proxy
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Monolith
-        id: meta-monolith
-        uses: docker/metadata-action@v4
+      - name: Normalize image name
+        id: image
+        env:
+          SERVICE: ${{ matrix.service }}
+        shell: bash
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          printf 'name=%s/%s/%s\n' "$REGISTRY" "$repository" "$SERVICE" >> "$GITHUB_OUTPUT"
+
+      - name: Extract image metadata
+        id: metadata
+        uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.MONOLITH_IMAGE_NAME }}
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
           tags: |
+            type=sha,format=long
+            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=ref,event=branch
-            latest
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || (github.event_name == 'release' && !github.event.release.prerelease) }}
 
-      - name: Build and push Monolith Docker image
-        uses: docker/build-push-action@v4
+      - name: Build and publish tested source
+        uses: docker/build-push-action@v7
         with:
-          context: ./src/monolith
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta-monolith.outputs.tags }}
-          labels: ${{ steps.meta-monolith.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Extract metadata (tags, labels) for Movies Service
-        id: meta-movies
-        uses: docker/metadata-action@v4
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.MOVIES_SERVICE_IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=ref,event=branch
-            latest
-
-      - name: Build and push Movies Service Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./src/microservices/movies
-          push: true
-          tags: ${{ steps.meta-movies.outputs.tags }}
-          labels: ${{ steps.meta-movies.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

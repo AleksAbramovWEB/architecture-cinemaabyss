@@ -80,6 +80,7 @@ coverage/
 .next/
 .nuxt/
 .cache/
+.local/
 .parcel-cache/
 reports/
 
