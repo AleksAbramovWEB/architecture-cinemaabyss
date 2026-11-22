@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-init-scripts
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -10,8 +10,7 @@ data:
   init.sql: |
     -- Initialize CinemaAbyss Database Schema
 
-    -- Connect to the database
-    \c {{ .Values.database.name }};
+    -- PostgreSQL entrypoint connects to POSTGRES_DB before running this script.
 
     -- Enable UUID extension
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

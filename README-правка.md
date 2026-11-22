@@ -176,7 +176,7 @@ kubectl apply -f src/kubernetes/proxy-service.yaml
 
 #### Предварительные требования
 
-- Node.js (v14 или выше)
+- Node.js (v16 или выше, требуется Newman 6)
 - npm (v6 или выше)
 - Newman (установлен через npm)
 

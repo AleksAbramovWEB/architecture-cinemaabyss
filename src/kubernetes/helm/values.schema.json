@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "domain"
+      ]
+    },
+    "imagePullSecrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        },
+        "dockerconfigjson": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "existingSecret",
+        "dockerconfigjson"
+      ]
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user": {
+          "type": "string",
+          "minLength": 1
+        },
+        "password": {
+          "type": "string"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "persistence": {
+          "$ref": "#/definitions/persistence"
+        }
+      },
+      "required": [
+        "host",
+        "port",
+        "name",
+        "user",
+        "password",
+        "existingSecret",
+        "image",
+        "resources",
+        "persistence"
+      ]
+    },
+    "monolith": {
+      "$ref": "#/definitions/app"
+    },
+    "proxyService": {
+      "$ref": "#/definitions/app"
+    },
+    "moviesService": {
+      "$ref": "#/definitions/app"
+    },
+    "eventsService": {
+      "$ref": "#/definitions/app"
+    },
+    "kafka": {
+      "$ref": "#/definitions/stateful"
+    },
+    "zookeeper": {
+      "$ref": "#/definitions/stateful"
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "secretName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "enabled",
+            "secretName"
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "className",
+        "annotations",
+        "tls"
+      ]
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "gradualMigration": {
+          "type": "boolean"
+        },
+        "moviesMigrationPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "kafkaBrokers": {
+          "type": "string"
+        },
+        "kafkaGroupId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "gradualMigration",
+        "moviesMigrationPercent",
+        "kafkaBrokers",
+        "kafkaGroupId"
+      ]
+    }
+  },
+  "required": [
+    "global",
+    "imagePullSecrets",
+    "database",
+    "monolith",
+    "proxyService",
+    "moviesService",
+    "eventsService",
+    "kafka",
+    "zookeeper",
+    "ingress",
+    "config"
+  ],
+  "definitions": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ]
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accessMode": {
+          "enum": [
+            "ReadWriteOnce",
+            "ReadWriteMany",
+            "ReadOnlyMany",
+            "ReadWriteOncePod"
+          ]
+        },
+        "storageClass": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "size",
+        "accessMode"
+      ]
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resources": {
+          "type": "object"
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "targetPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "type": {
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            }
+          },
+          "required": [
+            "port",
+            "targetPort",
+            "type"
+          ]
+        },
+        "javaOpts": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "image",
+        "replicas",
+        "resources",
+        "service"
+      ]
+    },
+    "stateful": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "replicas": {
+          "enum": [
+            1
+          ]
+        },
+        "heapOpts": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resources": {
+          "type": "object"
+        },
+        "persistence": {
+          "$ref": "#/definitions/persistence"
+        }
+      },
+      "required": [
+        "enabled",
+        "image",
+        "replicas",
+        "heapOpts",
+        "resources",
+        "persistence"
+      ]
+    }
+  }
+}

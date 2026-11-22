@@ -3,16 +3,16 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: events-service
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: events-service
-    app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "cinemaabyss.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.eventsService.replicas }}
   selector:
     matchLabels:
       app: events-service
+      app.kubernetes.io/instance: {{ .Release.Name }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -20,22 +20,70 @@ spec:
       maxUnavailable: 0
   template:
     metadata:
+      annotations:
+        checksum/config: {{ dict "kafkaBrokers" .Values.config.kafkaBrokers "kafkaGroupId" .Values.config.kafkaGroupId | toJson | sha256sum }}
       labels:
         app: events-service
+        {{- include "cinemaabyss.selectorLabels" . | nindent 8 }}
     spec:
+      terminationGracePeriodSeconds: 30
+      {{- include "cinemaabyss.imagePullSecrets" . | nindent 6 }}
       containers:
-      - name: events-service
-       .... тут
+        - name: events-service
+          image: {{ printf "%s:%v" .Values.eventsService.image.repository .Values.eventsService.image.tag | quote }}
+          imagePullPolicy: {{ .Values.eventsService.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.eventsService.service.targetPort }}
+          env:
+            - name: PORT
+              value: {{ .Values.eventsService.service.targetPort | quote }}
+            - name: JAVA_TOOL_OPTIONS
+              value: {{ .Values.eventsService.javaOpts | quote }}
+          envFrom:
+            - configMapRef:
+                name: cinemaabyss-config
+          resources:
+            {{- toYaml .Values.eventsService.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /api/events/health
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /api/events/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/events/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: events-service
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: events-service
-    app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "cinemaabyss.labels" . | nindent 4 }}
 spec:
- ........ и тут
+  type: {{ .Values.eventsService.service.type }}
+  selector:
+    app: events-service
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.eventsService.service.port }}
+      targetPort: http
 {{- end }}

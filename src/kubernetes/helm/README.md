@@ -1,195 +1,100 @@
-# CinemaAbyss Helm Chart
+# CinemaAbyss Helm chart
 
-This Helm chart deploys the CinemaAbyss application on a Kubernetes cluster.
+Chart разворачивает Proxy и Events на Spring Boot / Java 21, Go-монолит и Movies, PostgreSQL, Kafka и ZooKeeper. Ingress направляет весь бизнес-API в Proxy, включая `/api/events/*`.
 
-## Prerequisites
+Один release устанавливается в один namespace: имена Service фиксированы, а namespace берётся из `helm --namespace`. В другом namespace можно установить независимый экземпляр. Chart не создаёт и не удаляет Namespace.
 
-- Kubernetes 1.16+
-- Helm 3.0+
-- PV provisioner support in the underlying infrastructure (if persistence is enabled)
+## Подготовка
 
-## Installing the Chart
+Нужны Helm 3, Kubernetes с `networking.k8s.io/v1`, динамический provisioner PVC и ingress-nginx. Для локального TLS используется OpenSSL. Все четыре образа приложения по умолчанию берутся из публичного `ghcr.io/aleksabramovweb/architecture-cinemaabyss`, tag `cinema`; registry credentials не требуются. Для воспроизводимой версии можно указать опубликованный `sha-<полный SHA>` в `*.image.tag`.
 
-To install the chart with the release name `cinemaabyss`:
+Пример из корня репозитория:
 
 ```bash
-helm install cinemaabyss ./cinemaabyss
+# Выберите свой учебный Kubernetes-контекст до применения команд.
+kubectl create namespace cinemaabyss --dry-run=client -o yaml | kubectl apply -f -
+bash scripts/kubernetes/create-local-tls.sh --namespace cinemaabyss
+helm lint src/kubernetes/helm --strict
+helm template cinemaabyss src/kubernetes/helm --namespace cinemaabyss > /tmp/cinemaabyss-rendered.yaml
+kubectl apply --dry-run=server -f /tmp/cinemaabyss-rendered.yaml
+helm install cinemaabyss ./src/kubernetes/helm \
+  --namespace cinemaabyss --create-namespace --wait --atomic --timeout 10m
+helm status cinemaabyss --namespace cinemaabyss
+kubectl --namespace cinemaabyss get pods,services,ingress
 ```
 
-The command deploys CinemaAbyss on the Kubernetes cluster with default configuration. The [Parameters](#parameters) section lists the parameters that can be configured during installation.
+Если namespace уже содержит ручную установку задания 3, устанавливайте проверочный release в отдельный namespace с другим `global.domain` и сертификатом для этого имени либо предварительно выполните описанный в задании сброс учебного стенда. Helm не присваивает себе существующие чужие ресурсы. Для отдельного namespace передайте тот же namespace TLS-скрипту и Helm.
 
-## Uninstalling the Chart
+Ingress использует существующий Secret `cinemaabyss-tls`; локальный скрипт создаёт CA и сертификат с SAN `cinemaabyss.example.com`. Ключи хранятся только в игнорируемом `.local/`. В другой среде укажите собственный TLS Secret через values.
 
-To uninstall/delete the `cinemaabyss` deployment:
+## Проверка API
+
+Настройте маршрут от локальной машины к ingress и имя `cinemaabyss.example.com` (для minikube Docker на macOS варианты приведены в задании 3 `Project_template.md`).
 
 ```bash
-helm uninstall cinemaabyss
+curl --cacert .local/cinemaabyss/tls/ca.crt \
+  https://cinemaabyss.example.com/api/movies
+NODE_EXTRA_CA_CERTS="$PWD/.local/cinemaabyss/tls/ca.crt" \
+  npm --prefix tests/postman run test:kubernetes
+kubectl --namespace cinemaabyss logs deployment/events-service
 ```
 
-## Parameters
+Для curl без системной записи hosts добавьте `--resolve cinemaabyss.example.com:443:127.0.0.1`, если ingress проброшен на localhost:443. В Postman передавайте CA или доверяйте ему штатным способом; проверка TLS остаётся включённой.
 
-### Global Parameters
+## Настройки
 
-| Name                | Description                                     | Value           |
-|---------------------|-------------------------------------------------|-----------------|
-| `global.namespace`  | Namespace to deploy all resources               | `cinemaabyss`   |
-| `global.domain`     | Domain name for the application                 | `cinemaabyss.example.com` |
+Все значения находятся в [values.yaml](values.yaml), типы и допустимые диапазоны — в [values.schema.json](values.schema.json).
 
-### Database Parameters
+| Параметр | Назначение / значение по умолчанию |
+| --- | --- |
+| `global.domain` | Host ingress, `cinemaabyss.example.com`. |
+| `*.image.repository`, `*.image.tag`, `*.image.pullPolicy` | Образы; у приложений `cinema`, `IfNotPresent`. |
+| `proxyService.replicas` | Два экземпляра Proxy. |
+| `*.resources`, `*.service.port`, `*.service.targetPort` | Ресурсы и порты; upstream URL и ingress следуют Service-портам. |
+| `proxyService.javaOpts`, `eventsService.javaOpts` | JVM options для Java 21 с ограничением heap относительно памяти контейнера. |
+| `config.gradualMigration` | Boolean `true`: процентное переключение Movies. |
+| `config.moviesMigrationPercent` | Integer `0..100`, по умолчанию `100`. |
+| `config.kafkaBrokers` | Пусто — внутренний `kafka:9092`; задаётся явно для внешнего брокера. |
+| `config.kafkaGroupId` | Consumer group Events, `cinemaabyss-events-service`. |
+| `database.password` | Обычная строка, не base64; учебное значение `postgres_password`. |
+| `database.existingSecret` | Имя внешнего Secret с ключом `DB_PASSWORD`; при задании chart не создаёт свой DB Secret. |
+| `imagePullSecrets.existingSecret` | Внешний pull Secret в namespace release. |
+| `imagePullSecrets.dockerconfigjson` | Альтернатива: base64 Docker config JSON с `auths`. По умолчанию пусто; реальные credentials не сохраняйте в Git. |
+| `ingress.enabled`, `ingress.className` | Ingress включён, class `nginx`. |
+| `ingress.tls.enabled`, `ingress.tls.secretName` | HTTPS включён, Secret `cinemaabyss-tls`. |
+| `database.persistence.*`, `kafka.persistence.*`, `zookeeper.persistence.*` | PVC: enabled, size, accessMode, необязательный storageClass. `enabled=false` даёт `emptyDir`. |
+| `kafka.heapOpts`, `zookeeper.heapOpts` | Ограничения heap инфраструктурных JVM. |
 
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `database.host`                | PostgreSQL host                                 | `postgres`      |
-| `database.port`                | PostgreSQL port                                 | `5432`          |
-| `database.name`                | PostgreSQL database name                        | `cinemaabyss`   |
-| `database.user`                | PostgreSQL username                             | `postgres`      |
-| `database.password`            | PostgreSQL password (base64 encoded)            | `cG9zdGdyZXNfcGFzc3dvcmQ=` |
-| `database.image.repository`    | PostgreSQL image repository                     | `postgres`      |
-| `database.image.tag`           | PostgreSQL image tag                            | `14`            |
-| `database.image.pullPolicy`    | PostgreSQL image pull policy                    | `IfNotPresent`  |
-| `database.resources.limits.cpu`| PostgreSQL CPU limit                            | `1000m`         |
-| `database.resources.limits.memory` | PostgreSQL memory limit                     | `1Gi`           |
-| `database.resources.requests.cpu` | PostgreSQL CPU request                       | `500m`          |
-| `database.resources.requests.memory` | PostgreSQL memory request                 | `512Mi`         |
-| `database.persistence.enabled` | Enable persistence for PostgreSQL               | `true`          |
-| `database.persistence.size`    | PostgreSQL PVC size                             | `10Gi`          |
-| `database.persistence.accessMode` | PostgreSQL PVC access mode                   | `ReadWriteOnce` |
+Пример registry Secret, созданного отдельно: `helm install ... --set imagePullSecrets.existingSecret=ghcr-read`. Inline JSON допускается через локальный values-файл. Внешний DB Secret используется всеми подключающимися к PostgreSQL сервисами; обновление его содержимого требует согласованного обновления пароля в самой БД и перезапуска клиентов.
 
-### Monolith Parameters
+Kafka/ZooKeeper рассчитаны на один экземпляр. Топики `movie-events`, `user-events`, `payment-events` создаёт Kafka Admin сервиса Events. Broker probes — TCP, без запуска дополнительных JVM; `KAFKA_CREATE_TOPICS` не используется. Это сохраняет настройки, проверенные в задании 3.
 
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `monolith.enabled`             | Enable monolith deployment                      | `true`          |
-| `monolith.image.repository`    | Monolith image repository                       | `ghcr.io/db-exp/cinemaabysstest/monolith` |
-| `monolith.image.tag`           | Monolith image tag                              | `latest`        |
-| `monolith.image.pullPolicy`    | Monolith image pull policy                      | `Always`        |
-| `monolith.replicas`            | Number of monolith replicas                     | `1`             |
-| `monolith.resources.limits.cpu`| Monolith CPU limit                              | `500m`          |
-| `monolith.resources.limits.memory` | Monolith memory limit                       | `512Mi`         |
-| `monolith.resources.requests.cpu` | Monolith CPU request                         | `100m`          |
-| `monolith.resources.requests.memory` | Monolith memory request                   | `128Mi`         |
-| `monolith.service.port`        | Monolith service port                           | `8080`          |
-| `monolith.service.targetPort`  | Monolith container port                         | `8080`          |
-| `monolith.service.type`        | Monolith service type                           | `ClusterIP`     |
+При `kafka.enabled=false` и включённом Events укажите `config.kafkaBrokers`; встроенный Kafka требует `zookeeper.enabled=true`. При выключенном Proxy выключите и ingress. Некорректный процент и несовместимые настройки отклоняются до установки.
 
-### Proxy Service Parameters
+## Обновление и rollback
 
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `proxyService.enabled`         | Enable proxy service deployment                 | `true`          |
-| `proxyService.image.repository`| Proxy service image repository                  | `ghcr.io/db-exp/cinemaabysstest/proxy-service` |
-| `proxyService.image.tag`       | Proxy service image tag                         | `latest`        |
-| `proxyService.image.pullPolicy`| Proxy service image pull policy                 | `Always`        |
-| `proxyService.replicas`        | Number of proxy service replicas                | `1`             |
-| `proxyService.resources.limits.cpu`| Proxy service CPU limit                     | `300m`          |
-| `proxyService.resources.limits.memory` | Proxy service memory limit              | `256Mi`         |
-| `proxyService.resources.requests.cpu` | Proxy service CPU request                | `100m`          |
-| `proxyService.resources.requests.memory` | Proxy service memory request          | `128Mi`         |
-| `proxyService.service.port`    | Proxy service port                              | `80`            |
-| `proxyService.service.targetPort` | Proxy service container port                 | `8000`          |
-| `proxyService.service.type`    | Proxy service type                              | `ClusterIP`     |
+```bash
+helm upgrade cinemaabyss ./src/kubernetes/helm --namespace cinemaabyss \
+  --set config.moviesMigrationPercent=0 --wait --atomic --timeout 10m
+helm history cinemaabyss --namespace cinemaabyss
+# Номер ревизии берётся из history; пример возврата к первой установке:
+helm rollback cinemaabyss 1 --namespace cinemaabyss --wait --timeout 10m
+```
 
-### Movies Service Parameters
+Checksum-аннотации автоматически обновляют Pod при изменении нужной ему конфигурации. Переключение процента перезапускает только Proxy, с RollingUpdate `maxUnavailable: 0`; PostgreSQL, Kafka и consumers продолжают работу. Для image tag предпочтительны новые SHA-теги, чтобы Kubernetes гарантированно выполнил rollout новой версии.
 
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `moviesService.enabled`        | Enable movies service deployment                | `true`          |
-| `moviesService.image.repository`| Movies service image repository                | `ghcr.io/db-exp/cinemaabysstest/movies-service` |
-| `moviesService.image.tag`      | Movies service image tag                        | `latest`        |
-| `moviesService.image.pullPolicy`| Movies service image pull policy               | `Always`        |
-| `moviesService.replicas`       | Number of movies service replicas               | `1`             |
-| `moviesService.resources.limits.cpu`| Movies service CPU limit                   | `300m`          |
-| `moviesService.resources.limits.memory` | Movies service memory limit            | `256Mi`         |
-| `moviesService.resources.requests.cpu` | Movies service CPU request              | `100m`          |
-| `moviesService.resources.requests.memory` | Movies service memory request        | `128Mi`         |
-| `moviesService.service.port`   | Movies service port                             | `8081`          |
-| `moviesService.service.targetPort` | Movies service container port               | `8081`          |
-| `moviesService.service.type`   | Movies service type                             | `ClusterIP`     |
+## Данные и очистка
 
-### Events Service Parameters
+```bash
+helm uninstall cinemaabyss --namespace cinemaabyss --wait
+```
 
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `eventsService.enabled`        | Enable events service deployment                | `true`          |
-| `eventsService.image.repository`| Events service image repository                | `ghcr.io/db-exp/cinemaabysstest/events-service` |
-| `eventsService.image.tag`      | Events service image tag                        | `latest`        |
-| `eventsService.image.pullPolicy`| Events service image pull policy               | `Always`        |
-| `eventsService.replicas`       | Number of events service replicas               | `1`             |
-| `eventsService.resources.limits.cpu`| Events service CPU limit                   | `300m`          |
-| `eventsService.resources.limits.memory` | Events service memory limit            | `256Mi`         |
-| `eventsService.resources.requests.cpu` | Events service CPU request              | `100m`          |
-| `eventsService.resources.requests.memory` | Events service memory request        | `128Mi`         |
-| `eventsService.service.port`   | Events service port                             | `8082`          |
-| `eventsService.service.targetPort` | Events service container port               | `8082`          |
-| `eventsService.service.type`   | Events service type                             | `ClusterIP`     |
+По умолчанию PostgreSQL PVC сохраняется при удалении StatefulSet; отдельные Kafka/ZooKeeper PVC помечены `helm.sh/resource-policy: keep`. Повторная установка с тем же release/namespace использует эти тома. Kafka и ZooKeeper нужно сохранять либо сбрасывать согласованной парой, иначе возможен Cluster ID mismatch. Инициализация PostgreSQL выполняется только для пустого каталога данных; изменение database name/user/password или SQL init не мигрирует существующую БД. Изменение размера/класса PVC зависит от provisioner и не выполняется изменением immutable StatefulSet-полей.
 
-### Kafka Parameters
+Для полного удаления **только одноразового проверочного namespace**, включая его данные:
 
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `kafka.enabled`                | Enable Kafka deployment                         | `true`          |
-| `kafka.image.repository`       | Kafka image repository                          | `wurstmeister/kafka` |
-| `kafka.image.tag`              | Kafka image tag                                 | `2.13-2.7.0`    |
-| `kafka.image.pullPolicy`       | Kafka image pull policy                         | `IfNotPresent`  |
-| `kafka.replicas`               | Number of Kafka replicas                        | `1`             |
-| `kafka.resources.limits.cpu`   | Kafka CPU limit                                 | `1000m`         |
-| `kafka.resources.limits.memory`| Kafka memory limit                              | `1Gi`           |
-| `kafka.resources.requests.cpu` | Kafka CPU request                               | `200m`          |
-| `kafka.resources.requests.memory` | Kafka memory request                         | `512Mi`         |
-| `kafka.persistence.enabled`    | Enable persistence for Kafka                    | `true`          |
-| `kafka.persistence.size`       | Kafka PVC size                                  | `5Gi`           |
-| `kafka.persistence.accessMode` | Kafka PVC access mode                           | `ReadWriteOnce` |
-| `kafka.topics`                 | Kafka topics configuration                      | See values.yaml |
+```bash
+kubectl delete namespace cinemaabyss
+```
 
-### Zookeeper Parameters
-
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `zookeeper.enabled`            | Enable Zookeeper deployment                     | `true`          |
-| `zookeeper.image.repository`   | Zookeeper image repository                      | `wurstmeister/zookeeper` |
-| `zookeeper.image.tag`          | Zookeeper image tag                             | `latest`        |
-| `zookeeper.image.pullPolicy`   | Zookeeper image pull policy                     | `IfNotPresent`  |
-| `zookeeper.replicas`           | Number of Zookeeper replicas                    | `1`             |
-| `zookeeper.resources.limits.cpu`| Zookeeper CPU limit                            | `500m`          |
-| `zookeeper.resources.limits.memory` | Zookeeper memory limit                     | `512Mi`         |
-| `zookeeper.resources.requests.cpu` | Zookeeper CPU request                       | `100m`          |
-| `zookeeper.resources.requests.memory` | Zookeeper memory request                 | `256Mi`         |
-| `zookeeper.persistence.enabled`| Enable persistence for Zookeeper                | `true`          |
-| `zookeeper.persistence.size`   | Zookeeper PVC size                              | `1Gi`           |
-| `zookeeper.persistence.accessMode` | Zookeeper PVC access mode                   | `ReadWriteOnce` |
-
-### Ingress Parameters
-
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `ingress.enabled`              | Enable ingress                                  | `true`          |
-| `ingress.className`            | Ingress class name                              | `nginx`         |
-| `ingress.annotations`          | Ingress annotations                             | See values.yaml |
-| `ingress.hosts`                | Ingress hosts configuration                     | See values.yaml |
-
-### Application Configuration
-
-| Name                           | Description                                     | Value           |
-|--------------------------------|-------------------------------------------------|-----------------|
-| `config.gradualMigration`      | Enable gradual migration                        | `true`          |
-| `config.moviesMigrationPercent`| Movies migration percentage                     | `100`           |
-
-## Architecture
-
-The CinemaAbyss application consists of the following components:
-
-1. **Monolith**: The main application that handles user authentication, subscriptions, and payments.
-2. **Proxy Service**: A service that routes requests to the appropriate microservice or the monolith.
-3. **Movies Service**: A microservice that handles movie-related functionality.
-4. **Events Service**: A microservice that handles event processing using Kafka.
-5. **PostgreSQL**: The database used by all services.
-6. **Kafka**: Message broker for event-driven communication.
-7. **Zookeeper**: Required for Kafka coordination.
-
-## Persistence
-
-The chart mounts a Persistent Volume for PostgreSQL, Kafka, and Zookeeper. The volume is created using dynamic volume provisioning. If you want to disable this functionality, you can set `database.persistence.enabled`, `kafka.persistence.enabled`, and `zookeeper.persistence.enabled` to `false`.
-
-## Image Pull Secrets
-
-The chart includes a secret for pulling images from private registries. The secret is created using the value provided in `imagePullSecrets.dockerconfigjson`.
+После локальной проверки остановите/удалите также созданный для неё minikube-профиль и вспомогательные port-forward/Docker-пробросы. Эти ресурсы не управляются Helm.

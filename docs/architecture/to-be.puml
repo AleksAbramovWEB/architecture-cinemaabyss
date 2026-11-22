@@ -1,0 +1,101 @@
+@startuml
+!pragma layout smetana
+!include <C4/C4_Container>
+
+' Use the bundled C4 standard library: no remote includes or Graphviz required.
+LAYOUT_LEFT_RIGHT()
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName SansSerif
+skinparam shadowing false
+skinparam nodesep 45
+skinparam ranksep 70
+
+AddRelTag("async", $textColor="#986000", $lineColor="#986000", $lineStyle=DashedLine(), $legendText="Асинхронные события / фоновый обмен")
+
+title Кинобездна — To-Be\nC4 Container / уровень 2
+
+Person(viewer, "Зритель", "Выбирает и смотрит кино")
+
+System_Boundary(cinema, "Кинобездна") {
+    Container(web, "Web-приложение", "Browser / JavaScript", "Интерфейс для ноутбуков")
+    Container(mobile, "Мобильное приложение", "iOS / Android", "Компактные ответы и экраны")
+    Container(tv, "Smart TV-приложение", "Smart TV", "Каталог и управление плеером")
+
+    Container(gateway, "API Gateway / Proxy", "Java 21 / Spring Boot / HTTP", "Единая точка входа в бизнес-API.\nПроверка токенов, маршрутизация, Strangler Fig.\nМодуль BFF: представления Web / Mobile / TV.")
+
+    Container(users, "Users Service", "Go / REST", "Пользователи и доступ.\nАккаунты, аутентификация, профили; выпуск токенов.")
+    ContainerDb(users_db, "Users DB", "PostgreSQL", "Аккаунты и профили")
+
+    Container(movies, "Movies Service", "Go / REST", "Каталог и метаданные.\nФильмы, жанры, актёры; проекция общего рейтинга.")
+    ContainerDb(movies_db, "Movies DB", "PostgreSQL", "Метаданные и агрегированный рейтинг")
+
+    Container(engagement, "Engagement Service", "Go / REST", "Пользовательская активность.\nИзбранное и папки, история просмотров, личные оценки.")
+    ContainerDb(engagement_db, "Engagement DB", "PostgreSQL", "Избранное, история и личные оценки")
+
+    Container(commerce, "Commerce Service", "Go / REST", "Монетизация.\nМодули платежей, подписок и скидок.\nПроверка права просмотра по подписке.")
+    ContainerDb(commerce_db, "Commerce DB", "PostgreSQL", "Платежи, подписки, тарифы и скидки")
+
+    Container(playback, "Playback Service", "Go / REST", "Просмотр контента.\nВидео, источники, права, сессии; выдача URL потока.")
+    ContainerDb(playback_db, "Playback DB", "PostgreSQL", "Источники, права и сессии")
+
+    Container(recommendations, "Recommendations Service", "Go / REST + workers", "Рекомендации.\nАдаптер сторонней рекомендательной системы.\nФоновый обмен и выдача готовых подборок.")
+    ContainerDb(recommendations_db, "Recommendations DB", "PostgreSQL", "Подборки и состояние фоновой обработки")
+
+    ContainerQueue(kafka, "Шина событий", "Apache Kafka", "user-events, movie-events, payment-events;\nactivity-events — расширение после MVP.\nНезависимые consumer groups; повторная доставка.")
+}
+
+System_Ext(recommender, "Рекомендательная система", "Вычисляет персональные подборки")
+System_Ext(payments, "Платёжные провайдеры", "Инициирование платежей и подтверждённые статусы")
+System_Ext(loyalty, "Лояльность / маркетплейсы", "Акции, скидки и партнёрские продажи")
+System_Ext(content, "Поставщики контента", "Сервисы и открытые источники: права, источники, URL")
+System_Ext(cdn, "Доставка видео / CDN поставщика", "Видеопоток идёт напрямую в клиентские приложения")
+
+Rel(viewer, web, "Использует")
+Rel(viewer, mobile, "Использует")
+Rel(viewer, tv, "Использует")
+Rel(web, gateway, "Вызывает единый API", "HTTPS / REST / JSON")
+Rel(mobile, gateway, "Вызывает единый API", "HTTPS / REST / JSON")
+Rel(tv, gateway, "Вызывает единый API", "HTTPS / REST / JSON")
+
+Rel(gateway, users, "Аккаунты, вход и профиль", "REST / JSON")
+Rel(gateway, movies, "Каталог и карточки фильмов", "REST / JSON")
+Rel(gateway, engagement, "Избранное, оценки и история", "REST / JSON")
+Rel(gateway, commerce, "Подписки, платежи, скидки; webhook", "REST / JSON")
+Rel(gateway, playback, "Запрашивает разрешённый URL", "REST / JSON")
+Rel(gateway, recommendations, "Запрашивает готовую подборку", "REST / JSON")
+
+Rel(users, users_db, "Читает / пишет", "SQL")
+Rel(movies, movies_db, "Читает / пишет", "SQL")
+Rel(engagement, engagement_db, "Читает / пишет", "SQL")
+Rel(commerce, commerce_db, "Читает / пишет", "SQL")
+Rel(playback, playback_db, "Читает / пишет", "SQL")
+Rel(recommendations, recommendations_db, "Читает / пишет", "SQL")
+
+Rel(playback, commerce, "Проверяет действующую подписку", "REST / JSON")
+Rel(commerce, payments, "Инициирует / проверяет платёж", "HTTPS API")
+Rel(payments, gateway, "Отправляет подписанный webhook", "HTTPS")
+Rel(commerce, loyalty, "Обменивается акциями и партнёрскими заказами", "HTTPS API")
+Rel(playback, content, "Проверяет права; получает URL", "HTTPS API")
+Rel(web, cdn, "Получает поток по выданному URL", "HTTPS / HLS / DASH")
+Rel(mobile, cdn, "Получает поток по выданному URL", "HTTPS / HLS / DASH")
+Rel(tv, cdn, "Получает поток по выданному URL", "HTTPS / HLS / DASH")
+
+Rel(users, kafka, "Публикует UserChanged", "user-events", $tags="async")
+Rel(movies, kafka, "Публикует MovieChanged", "movie-events", $tags="async")
+Rel(engagement, kafka, "Публикует RatingSubmitted / WatchRecorded", "activity-events", $tags="async")
+Rel(commerce, kafka, "Публикует PaymentConfirmed", "payment-events", $tags="async")
+Rel(playback, kafka, "Публикует PlaybackStarted", "activity-events", $tags="async")
+Rel(kafka, movies, "Доставляет оценки для проекции рейтинга", "activity-events", $tags="async")
+Rel(kafka, engagement, "Доставляет начало просмотра для истории", "activity-events", $tags="async")
+Rel(kafka, recommendations, "Доставляет User / Movie / Activity / Payment events", "Kafka consumer", $tags="async")
+Rel(recommendations, recommender, "Передаёт данные; получает подборки в фоне", "HTTPS API поставщика", $tags="async")
+
+footer
+Полная To-Be после декомпозиции; серверные приложения — Kubernetes + Helm.
+Отдельные БД и роли; transactional outbox; идемпотентные потребители.
+Спринт: Proxy + monolith + movies + Events MVP + общая PostgreSQL + Kafka.
+Остальные сервисы и разделение БД — последующие этапы, см. Project_template.md.
+end footer
+
+SHOW_LEGEND()
+@enduml

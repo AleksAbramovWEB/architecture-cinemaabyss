@@ -4,19 +4,23 @@ metadata:
   name: cinemaabyss-ingress
   namespace: cinemaabyss
   annotations:
-    kubernetes.io/ingress.class: "nginx"
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
+  ingressClassName: nginx
+  # Create this Secret at deployment time; do not commit private keys.
+  tls:
+    - hosts:
+        - cinemaabyss.example.com
+      secretName: cinemaabyss-tls
   rules:
     - host: cinemaabyss.example.com
       http:
         paths:
-          #дополните конфигурацию для /
-          ...
-          - path: /api/events
+          # All business API paths, including /api/events, pass through the same Gateway.
+          - path: /
             pathType: Prefix
             backend:
               service:
-                name: events-service
+                name: proxy-service
                 port:
-                  number: 8082
+                  number: 8000

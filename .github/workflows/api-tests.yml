@@ -1,71 +1,77 @@
 name: API Tests
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  workflow_call:
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Environment to run tests against'
-        required: true
-        default: 'docker'
-        type: choice
-        options:
-          - local
-          - docker
       test_folder:
-        description: 'Test folder to run (leave empty for all)'
+        description: 'Postman folder (empty runs the complete collection)'
         required: false
+        default: ''
         type: string
+
+permissions:
+  contents: read
 
 jobs:
   api-tests:
-    name: Run API Tests
+    name: Docker Compose API tests
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 20
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Docker Compose
-        run: |
-          docker compose --version
-      
-      - name: Start services with Docker Compose
-        run: |
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 120
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: tests/postman/package-lock.json
-      
-      - name: Install Newman and dependencies
-        working-directory: tests/postman
-        run: npm install
-      
-      - name: Run API tests
-        working-directory: tests/postman
-        run: |
+          persist-credentials: false
 
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 15
-          # Build the Docker image
-          docker build -t cinemaabyss-api-tests .
-          
-          # Run the tests in Docker
-          docker run --network=cinemaabyss-network -v "$(pwd)/reports:/app/reports" cinemaabyss-api-tests
-        
-      
-      - name: Stop services
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tests/postman/package-lock.json
+
+      - name: Install Postman runner
+        working-directory: tests/postman
+        run: npm ci
+
+      - name: Build and start the complete stack
+        run: docker compose up -d --build
+
+      - name: Wait for HTTP readiness
+        run: bash scripts/ci/wait-for-services.sh
+
+      - name: Run Postman collection
+        working-directory: tests/postman
+        env:
+          TEST_FOLDER: ${{ inputs.test_folder || '' }}
+        shell: bash
+        run: |
+          if [[ -n "$TEST_FOLDER" ]]; then
+            npm run test:local -- --folder "$TEST_FOLDER"
+          else
+            npm run test:local
+          fi
+
+      - name: Collect Compose diagnostics
         if: always()
-        run: docker compose down
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts/api
+          docker compose ps --all > artifacts/api/compose-status.txt
+          docker compose logs --no-color > artifacts/api/compose.log
+
+      - name: Upload API reports and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-tests
+          path: |
+            tests/postman/reports/
+            artifacts/api/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop the CI stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

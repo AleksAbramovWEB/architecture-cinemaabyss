@@ -1,69 +1,61 @@
-{{/*
-Expand the name of the chart.
-*/}}
 {{- define "cinemaabyss.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 
-{{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
-*/}}
-{{- define "cinemaabyss.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
-{{- end }}
-{{- end }}
-
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
 {{- define "cinemaabyss.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 
-{{/*
-Common labels
-*/}}
-{{- define "cinemaabyss.labels" -}}
-helm.sh/chart: {{ include "cinemaabyss.chart" . }}
-{{ include "cinemaabyss.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
-Selector labels
-*/}}
 {{- define "cinemaabyss.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "cinemaabyss.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
+{{- end -}}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "cinemaabyss.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "cinemaabyss.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
+{{- define "cinemaabyss.labels" -}}
+helm.sh/chart: {{ include "cinemaabyss.chart" . }}
+{{ include "cinemaabyss.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
 
-{{/*
-Return the namespace
-*/}}
 {{- define "cinemaabyss.namespace" -}}
-{{- default .Values.global.namespace .Release.Namespace }}
-{{- end }}
+{{- .Release.Namespace -}}
+{{- end -}}
+
+{{- define "cinemaabyss.databaseSecretName" -}}
+{{- default "cinemaabyss-secrets" .Values.database.existingSecret -}}
+{{- end -}}
+
+{{- define "cinemaabyss.imagePullSecrets" -}}
+{{- if .Values.imagePullSecrets.existingSecret -}}
+imagePullSecrets:
+  - name: {{ .Values.imagePullSecrets.existingSecret | quote }}
+{{- else if .Values.imagePullSecrets.dockerconfigjson -}}
+imagePullSecrets:
+  - name: dockerconfigjson
+{{- end -}}
+{{- end -}}
+
+{{- define "cinemaabyss.validate" -}}
+{{- if and (empty .Values.database.existingSecret) (empty .Values.database.password) -}}
+{{- fail "Set database.password or database.existingSecret" -}}
+{{- end -}}
+{{- if and .Values.kafka.enabled (not .Values.zookeeper.enabled) -}}
+{{- fail "The bundled Kafka broker requires zookeeper.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.eventsService.enabled (not .Values.kafka.enabled) (empty .Values.config.kafkaBrokers) -}}
+{{- fail "Set config.kafkaBrokers when Events uses an external Kafka broker" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (not .Values.proxyService.enabled) -}}
+{{- fail "ingress.enabled requires proxyService.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled (empty .Values.ingress.tls.secretName) -}}
+{{- fail "Set ingress.tls.secretName for HTTPS" -}}
+{{- end -}}
+{{- if .Values.imagePullSecrets.dockerconfigjson -}}
+{{- $auth := .Values.imagePullSecrets.dockerconfigjson | b64dec | fromJson -}}
+{{- if or (hasKey $auth "Error") (not (hasKey $auth "auths")) -}}
+{{- fail "imagePullSecrets.dockerconfigjson must be base64-encoded Docker config JSON with auths" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
